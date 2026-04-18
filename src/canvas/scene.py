@@ -1,12 +1,14 @@
 """CircuitScene — QGraphicsScene with schematic editing modes."""
 from __future__ import annotations
 
+import copy
+import re
 import uuid
 from enum import Enum, auto
 from typing import Any
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QPainter, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEvent
 
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
@@ -151,6 +153,32 @@ def create_component_item(
     return cls(ref=ref, value=value, params=params or {}, comp_id=comp_id)
 
 
+class _SnapshotCommand(QUndoCommand):
+    """Undo/redo command that restores the entire circuit from a snapshot."""
+
+    def __init__(
+        self,
+        scene: "CircuitScene",
+        before: dict[str, Any],
+        after: dict[str, Any],
+        text: str,
+    ) -> None:
+        super().__init__(text)
+        self._scene = scene
+        self._before = before
+        self._after = after
+        self._first_redo = True  # skip redo on initial push (already applied)
+
+    def undo(self) -> None:
+        self._scene._restore_snapshot(self._before)
+
+    def redo(self) -> None:
+        if self._first_redo:
+            self._first_redo = False
+            return
+        self._scene._restore_snapshot(self._after)
+
+
 class CircuitScene(QGraphicsScene):
     """Main schematic canvas scene."""
 
@@ -175,6 +203,12 @@ class CircuitScene(QGraphicsScene):
 
         # Grid visibility flag (False during export)
         self._show_grid: bool = True
+
+        # Undo/redo — set by main_window after construction
+        self.undo_stack: QUndoStack | None = None
+
+        # Clipboard for copy/paste (list of serialised component dicts)
+        self._clipboard: list[dict[str, Any]] = []
 
         self.setBackgroundBrush(QColor("#f8f8f8"))
         self.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
@@ -283,6 +317,9 @@ class CircuitScene(QGraphicsScene):
             return
         entry, library_id = result
 
+        # Capture before-state for undo
+        before = self._take_snapshot()
+
         ref = self.circuit.next_ref(entry.ref_prefix)
         default_value = entry.default_value
         default_params = dict(entry.default_params)
@@ -296,6 +333,25 @@ class CircuitScene(QGraphicsScene):
         if item is None:
             return
         item.setPos(pos)
+
+        # Apply ghost rotation and flip so the user's shortcut adjustments are
+        # preserved on the placed component (Issue 3).
+        if self._ghost is not None:
+            ghost_rot = self._ghost.rotation()
+            ghost_fh = self._ghost._flip_h_active
+            ghost_fv = self._ghost._flip_v_active
+            if ghost_rot:
+                item.setRotation(ghost_rot)
+            if ghost_fh or ghost_fv:
+                from PyQt6.QtGui import QTransform
+                item.setTransform(QTransform(
+                    -1.0 if ghost_fh else 1.0, 0, 0,
+                    0, -1.0 if ghost_fv else 1.0, 0,
+                    0, 0, 1,
+                ))
+                item._flip_h_active = ghost_fh
+                item._flip_v_active = ghost_fv
+
         self.addItem(item)
 
         comp_dict: dict[str, Any] = {
@@ -307,13 +363,19 @@ class CircuitScene(QGraphicsScene):
             "params": default_params,
             "x": pos.x(),
             "y": pos.y(),
-            "rotation": 0,
+            "rotation": item.rotation(),
+            "flip_h": item._flip_h_active,
+            "flip_v": item._flip_v_active,
         }
         self.circuit.add_component(comp_dict)
         self.component_placed.emit(comp_dict)
 
         # Rebuild all auto-wires after placement
         self._rebuild_auto_wires()
+
+        # Push undo command
+        after = self._take_snapshot()
+        self._push_undo("Place Component", before, after)
 
     # ------------------------------------------------------------------
     # Wire drawing
@@ -613,6 +675,28 @@ class CircuitScene(QGraphicsScene):
             self._ghost = None
 
     # ------------------------------------------------------------------
+    # Undo / redo helpers
+    # ------------------------------------------------------------------
+
+    def _take_snapshot(self) -> dict[str, Any]:
+        """Return a deep copy of the current circuit state."""
+        self.sync_to_circuit()
+        return copy.deepcopy(self.circuit.to_dict())
+
+    def _push_undo(
+        self, text: str, before: dict[str, Any], after: dict[str, Any]
+    ) -> None:
+        """Push a snapshot command onto the undo stack (if connected)."""
+        if self.undo_stack is not None:
+            cmd = _SnapshotCommand(self, before, after, text)
+            self.undo_stack.push(cmd)
+
+    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Restore circuit state from a snapshot and rebuild the scene."""
+        self.circuit.from_dict(snapshot)
+        self.rebuild_from_circuit()
+
+    # ------------------------------------------------------------------
     # Background grid
     # ------------------------------------------------------------------
 
@@ -779,9 +863,14 @@ class CircuitScene(QGraphicsScene):
                 lrp, lvp = None, None
 
             comp_id = str(uuid.uuid4())
+            # Use type_name from the layout section when available so that
+            # user-defined components are not misidentified by the SPICE parser
+            # (which can only guess type from the reference prefix letter).
+            resolved_type = (pos_data.get("type_name") if pos_data else None) \
+                or comp.get("type", "R")
             comp_dict: dict[str, Any] = {
                 "id": comp_id,
-                "type": comp.get("type", "R"),
+                "type": resolved_type,
                 "library_id": pos_data.get("library_id") if pos_data else None,
                 "ref": ref,
                 "value": comp.get("value", ""),
@@ -825,30 +914,109 @@ class CircuitScene(QGraphicsScene):
 
     def keyPressEvent(self, event: Any) -> None:
         key = event.key()
+        modifiers = event.modifiers()
+        ctrl = modifiers & Qt.KeyboardModifier.ControlModifier
+
+        # ── Shortcuts that work during component placement (ghost present) ──
+        if self._mode == SceneMode.PLACE_COMPONENT and self._ghost is not None:
+            if key == Qt.Key.Key_R and not ctrl:
+                self._ghost._rotate_cw()
+                return
+            elif key == Qt.Key.Key_F and not ctrl:
+                self._ghost._flip_h()
+                return
+            elif key == Qt.Key.Key_V and not ctrl:
+                self._ghost._flip_v()
+                return
+
         changed = False
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            for item in list(self.selectedItems()):
-                if isinstance(item, ComponentItem):
+            selected_comps = [
+                it for it in self.selectedItems()
+                if isinstance(it, ComponentItem)
+            ]
+            selected_wires = [
+                it for it in self.selectedItems()
+                if isinstance(it, WireItem)
+            ]
+            if selected_comps or selected_wires:
+                before = self._take_snapshot()
+                for item in selected_comps:
                     self.circuit.remove_component(item.component_id)
+                    self.removeItem(item)
                     changed = True
-                elif isinstance(item, WireItem):
+                for item in selected_wires:
                     self.circuit.remove_wire(item.wire_id)
-                self.removeItem(item)
-        elif key == Qt.Key.Key_R:
+                    self.removeItem(item)
+                if changed:
+                    self._rebuild_auto_wires()
+                after = self._take_snapshot()
+                self._push_undo("Delete", before, after)
+            return
+        elif key == Qt.Key.Key_C and ctrl:
+            # Copy selected components to clipboard
+            self.sync_to_circuit()
+            self._clipboard = []
             for item in self.selectedItems():
                 if isinstance(item, ComponentItem):
+                    comp = self.circuit.get_component(item.component_id)
+                    if comp:
+                        self._clipboard.append(copy.deepcopy(comp))
+        elif key == Qt.Key.Key_V and ctrl:
+            # Paste clipboard components with a positional offset
+            if self._clipboard:
+                before = self._take_snapshot()
+                _PASTE_OFFSET = 40.0
+                self.clearSelection()
+                for comp_data in self._clipboard:
+                    new_comp = copy.deepcopy(comp_data)
+                    new_comp["id"] = str(uuid.uuid4())
+                    new_comp["x"] = comp_data.get("x", 0.0) + _PASTE_OFFSET
+                    new_comp["y"] = comp_data.get("y", 0.0) + _PASTE_OFFSET
+                    m = re.match(r'^([A-Za-z_]+)', comp_data.get("ref", "X"))
+                    prefix = m.group(1) if m else "X"
+                    new_comp["ref"] = self.circuit.next_ref(prefix)
+                    self.circuit.add_component(new_comp)
+                self.rebuild_from_circuit()
+                after = self._take_snapshot()
+                self._push_undo("Paste", before, after)
+            return
+        elif key == Qt.Key.Key_R and not ctrl:
+            targets = [
+                it for it in self.selectedItems()
+                if isinstance(it, ComponentItem)
+            ]
+            if targets:
+                before = self._take_snapshot()
+                for item in targets:
                     item._rotate_cw()
                     changed = True
-        elif key == Qt.Key.Key_F:
-            for item in self.selectedItems():
-                if isinstance(item, ComponentItem):
+                after = self._take_snapshot()
+                self._push_undo("Rotate", before, after)
+        elif key == Qt.Key.Key_F and not ctrl:
+            targets = [
+                it for it in self.selectedItems()
+                if isinstance(it, ComponentItem)
+            ]
+            if targets:
+                before = self._take_snapshot()
+                for item in targets:
                     item._flip_h()
                     changed = True
-        elif key == Qt.Key.Key_V:
-            for item in self.selectedItems():
-                if isinstance(item, ComponentItem):
+                after = self._take_snapshot()
+                self._push_undo("Flip Horizontal", before, after)
+        elif key == Qt.Key.Key_V and not ctrl:
+            targets = [
+                it for it in self.selectedItems()
+                if isinstance(it, ComponentItem)
+            ]
+            if targets:
+                before = self._take_snapshot()
+                for item in targets:
                     item._flip_v()
                     changed = True
+                after = self._take_snapshot()
+                self._push_undo("Flip Vertical", before, after)
         elif key == Qt.Key.Key_Escape:
             self._cancel_wire()
             self.set_mode(SceneMode.SELECT)

@@ -155,7 +155,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
     # ── Layout section (SPICE components) ───────────────────────────────
     lines.append(".xcit_layout")
     lines.append(
-        "* ref  x  y  rotation  flip_h  flip_v  library_id"
+        "* ref  x  y  rotation  flip_h  flip_v  library_id  type_name"
         "  label_ref_dx  label_ref_dy  label_val_dx  label_val_dy"
     )
     for comp in circuit.components:
@@ -172,7 +172,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         lrp = comp.get("label_ref_pos", [0.0, -22.0])
         lvp = comp.get("label_val_pos", [0.0, 14.0])
         lines.append(
-            f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}"
+            f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}  {ctype}"
             f"  {lrp[0]:.2f}  {lrp[1]:.2f}  {lvp[0]:.2f}  {lvp[1]:.2f}"
         )
     lines.append(".end_xcit_layout")
@@ -306,11 +306,16 @@ def parse_xcit_netlist(
             rot = float(parts[3])
             fh = bool(int(parts[4]))
             fv = bool(int(parts[5]))
-            # library_id is in field 6 (new format) — optional
+            # library_id is in field 6 (new format) — optional string
             idx = 6
             lib_id: str | None = None
             if len(parts) > idx and not _is_float(parts[idx]):
                 lib_id = parts[idx]
+                idx += 1
+            # type_name is the next optional string field (added in XCIT v2.1)
+            type_name: str | None = None
+            if len(parts) > idx and not _is_float(parts[idx]):
+                type_name = parts[idx]
                 idx += 1
             lrp = [float(parts[idx]), float(parts[idx + 1])] \
                 if len(parts) >= idx + 2 else [0.0, -22.0]
@@ -324,6 +329,7 @@ def parse_xcit_netlist(
             "flip_h": fh,
             "flip_v": fv,
             "library_id": lib_id,
+            "type_name": type_name,
             "label_ref_pos": lrp,
             "label_val_pos": lvp,
         }

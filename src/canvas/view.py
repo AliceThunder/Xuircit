@@ -1,7 +1,7 @@
 """CircuitView — QGraphicsView with zoom and pan."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QWheelEvent
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsView
 
@@ -32,6 +32,8 @@ class CircuitView(QGraphicsView):
         self._panning = False
         self._pan_start_x = 0
         self._pan_start_y = 0
+        # Accept external drag-and-drop from the component palette (Issue 2)
+        self.setAcceptDrops(True)
 
     # ------------------------------------------------------------------
     # Zoom
@@ -112,3 +114,70 @@ class CircuitView(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
+    # Drag-and-drop from component palette (Issue 2)
+    # ------------------------------------------------------------------
+
+    _PALETTE_MIME = "application/x-xuircit-component"
+
+    def dragEnterEvent(self, event: object) -> None:
+        from PyQt6.QtGui import QDragEnterEvent
+        if isinstance(event, QDragEnterEvent) and event.mimeData().hasFormat(
+            self._PALETTE_MIME
+        ):
+            comp_type = (
+                event.mimeData().data(self._PALETTE_MIME).data().decode("utf-8")
+            )
+            scene = self.scene()
+            # Create a ghost preview if one is not already showing
+            if (
+                hasattr(scene, "set_pending_component")
+                and hasattr(scene, "_ghost")
+                and scene._ghost is None  # type: ignore[union-attr]
+            ):
+                scene.set_pending_component(comp_type)  # type: ignore[union-attr]
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)  # type: ignore[arg-type]
+
+    def dragMoveEvent(self, event: object) -> None:
+        from PyQt6.QtGui import QDragMoveEvent
+        if isinstance(event, QDragMoveEvent) and event.mimeData().hasFormat(
+            self._PALETTE_MIME
+        ):
+            scene = self.scene()
+            if hasattr(scene, "_ghost") and scene._ghost is not None:  # type: ignore[union-attr]
+                from ..canvas.grid import snap_to_grid
+                view_pos = event.position().toPoint()
+                sp = self.mapToScene(view_pos)
+                sx, sy = snap_to_grid(sp.x(), sp.y())
+                scene._ghost.setPos(QPointF(sx, sy))  # type: ignore[union-attr]
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)  # type: ignore[arg-type]
+
+    def dragLeaveEvent(self, event: object) -> None:
+        scene = self.scene()
+        if hasattr(scene, "_clear_ghost"):
+            scene._clear_ghost()  # type: ignore[union-attr]
+        super().dragLeaveEvent(event)  # type: ignore[arg-type]
+
+    def dropEvent(self, event: object) -> None:
+        from PyQt6.QtGui import QDropEvent
+        if isinstance(event, QDropEvent) and event.mimeData().hasFormat(
+            self._PALETTE_MIME
+        ):
+            scene = self.scene()
+            from ..canvas.grid import snap_to_grid
+            view_pos = event.position().toPoint()
+            sp = self.mapToScene(view_pos)
+            sx, sy = snap_to_grid(sp.x(), sp.y())
+            if hasattr(scene, "_place_component") and hasattr(scene, "_pending_type"):
+                if scene._pending_type:  # type: ignore[union-attr]
+                    scene._place_component(QPointF(sx, sy))  # type: ignore[union-attr]
+            if hasattr(scene, "_clear_ghost"):
+                scene._clear_ghost()  # type: ignore[union-attr]
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)  # type: ignore[arg-type]

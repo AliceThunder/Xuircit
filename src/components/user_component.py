@@ -39,9 +39,19 @@ class UserComponentItem(ComponentItem):
             w, h = 60.0, 40.0
         self._WIDTH = w
         self._HEIGHT = h
-        # Apply label offsets from the user component definition
-        self._ref_label_offset = tuple(udef.ref_label_offset)  # type: ignore[assignment]
-        self._val_label_offset = tuple(udef.val_label_offset)  # type: ignore[assignment]
+        # Compute label offsets: use stored values but push them outside the
+        # component body when the component is taller than the default assumes.
+        hh = h / 2
+        rx, ry = udef.ref_label_offset[0], udef.ref_label_offset[1]
+        vx, vy = udef.val_label_offset[0], udef.val_label_offset[1]
+        # If the stored y offset would place the label inside the bounding box,
+        # clamp it to just outside the body (hh + 14 px margin).
+        if ry > -(hh + 10.0):
+            ry = -(hh + 14.0)
+        if vy < (hh + 10.0):
+            vy = hh + 14.0
+        self._ref_label_offset = (rx, ry)  # type: ignore[assignment]
+        self._val_label_offset = (vx, vy)  # type: ignore[assignment]
         super().__init__(udef.type_name, ref, value, params, comp_id,
                          library_id=library_id)
         # ── Extra labels from udef.labels (beyond ref and value) ─────

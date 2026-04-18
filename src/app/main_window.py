@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
 
         # Scene and view
         self._scene = CircuitScene(self._circuit)
+        self._scene.undo_stack = self._undo_stack  # wire undo/redo (Issue 6)
         self._view = CircuitView(self._scene)
         self.setCentralWidget(self._view)
 
