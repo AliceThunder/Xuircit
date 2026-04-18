@@ -30,8 +30,7 @@ _FIRST_CHAR_MAP: dict[str, str] = {
 
 _VALUE_RE = re.compile(
     r"^([0-9]+\.?[0-9]*|[0-9]*\.[0-9]+)"
-    r"([eE][+-]?[0-9]+)?([TGMkKmuUnpPf]?)$",
-    re.IGNORECASE,
+    r"([eE][+-]?[0-9]+)?([TGMkmuUnpf]?)$",
 )
 
 

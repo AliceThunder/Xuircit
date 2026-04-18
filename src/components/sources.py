@@ -33,7 +33,7 @@ class VoltageSourceItem(ComponentItem):
         painter.setFont(QFont("sans", 8, QFont.Weight.Bold))
         painter.setPen(QPen(QColor("#111")))
         painter.drawText(-4, -4, "+")
-        painter.drawText(-4, 10, "−")
+        painter.drawText(-4, 10, "-")
 
 
 class CurrentSourceItem(ComponentItem):
