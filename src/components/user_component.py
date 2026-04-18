@@ -38,6 +38,9 @@ class UserComponentItem(ComponentItem):
             w, h = 60.0, 40.0
         self._WIDTH = w
         self._HEIGHT = h
+        # Apply label offsets from the user component definition
+        self._ref_label_offset = tuple(udef.ref_label_offset)  # type: ignore[assignment]
+        self._val_label_offset = tuple(udef.val_label_offset)  # type: ignore[assignment]
         super().__init__(udef.type_name, ref, value, params, comp_id)
 
     # ------------------------------------------------------------------

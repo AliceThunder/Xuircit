@@ -15,6 +15,8 @@ class VoltageSourceItem(ComponentItem):
 
     _WIDTH = 40.0
     _HEIGHT = 40.0
+    _ref_label_offset = (-30.0, -8.0)
+    _val_label_offset = (26.0, -8.0)
 
     def __init__(self, ref: str = "V1", value: str = "5",
                  params: dict[str, Any] | None = None,
@@ -41,6 +43,8 @@ class CurrentSourceItem(ComponentItem):
 
     _WIDTH = 40.0
     _HEIGHT = 40.0
+    _ref_label_offset = (-30.0, -8.0)
+    _val_label_offset = (26.0, -8.0)
 
     def __init__(self, ref: str = "I1", value: str = "1m",
                  params: dict[str, Any] | None = None,
@@ -86,6 +90,8 @@ class VCVSItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 80.0
+    _ref_label_offset = (0.0, -52.0)
+    _val_label_offset = (0.0, 52.0)
 
     def __init__(self, ref: str = "E1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -117,6 +123,8 @@ class CCCSItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 80.0
+    _ref_label_offset = (0.0, -52.0)
+    _val_label_offset = (0.0, 52.0)
 
     def __init__(self, ref: str = "F1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -147,6 +155,8 @@ class VCCSItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 80.0
+    _ref_label_offset = (0.0, -52.0)
+    _val_label_offset = (0.0, 52.0)
 
     def __init__(self, ref: str = "G1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -177,6 +187,8 @@ class CCVSItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 80.0
+    _ref_label_offset = (0.0, -52.0)
+    _val_label_offset = (0.0, 52.0)
 
     def __init__(self, ref: str = "H1", value: str = "1",
                  params: dict[str, Any] | None = None,

@@ -15,6 +15,8 @@ class DiodeItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 30.0
+    _ref_label_offset = (0.0, -22.0)
+    _val_label_offset = (0.0, 22.0)
 
     def __init__(self, ref: str = "D1", value: str = "1N4148",
                  params: dict[str, Any] | None = None,
@@ -47,6 +49,8 @@ class ZenerDiodeItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 30.0
+    _ref_label_offset = (0.0, -22.0)
+    _val_label_offset = (0.0, 22.0)
 
     def __init__(self, ref: str = "D1", value: str = "BZX55C5V1",
                  params: dict[str, Any] | None = None,
@@ -87,6 +91,8 @@ class _BJTItem(ComponentItem):
     _WIDTH = 80.0
     _HEIGHT = 60.0
     _IS_NPN: bool = True
+    _ref_label_offset = (-50.0, -36.0)
+    _val_label_offset = (46.0, -26.0)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
@@ -156,6 +162,8 @@ class _MOSFETItem(ComponentItem):
     _WIDTH = 80.0
     _HEIGHT = 60.0
     _IS_N: bool = True
+    _ref_label_offset = (-50.0, -36.0)
+    _val_label_offset = (46.0, -26.0)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
@@ -221,6 +229,8 @@ class IGBTItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 60.0
+    _ref_label_offset = (-50.0, -36.0)
+    _val_label_offset = (46.0, -26.0)
 
     def __init__(self, ref: str = "Q1", value: str = "IRGB4062",
                  params: dict[str, Any] | None = None,

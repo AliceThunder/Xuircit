@@ -99,6 +99,8 @@ class WireElbowItem(ComponentItem):
 
     _WIDTH = 40.0
     _HEIGHT = 40.0
+    _show_ref_label = False
+    _show_val_label = False
 
     def __init__(self, ref: str = "J1", value: str = "",
                  params: dict[str, Any] | None = None,
@@ -114,9 +116,6 @@ class WireElbowItem(ComponentItem):
         # L-shaped corner mark
         painter.drawLine(QPointF(0, -20), QPointF(0, 0))
         painter.drawLine(QPointF(0, 0), QPointF(20, 0))
-        # Corner dot
-        painter.setBrush(QBrush(QColor("#1a1a8c")))
-        painter.drawEllipse(QPointF(0, 0), 4, 4)
 
 
 class WireTeeItem(ComponentItem):
@@ -127,6 +126,8 @@ class WireTeeItem(ComponentItem):
 
     _WIDTH = 40.0
     _HEIGHT = 40.0
+    _show_ref_label = False
+    _show_val_label = False
 
     def __init__(self, ref: str = "J1", value: str = "",
                  params: dict[str, Any] | None = None,
@@ -145,6 +146,3 @@ class WireTeeItem(ComponentItem):
         # T-shaped lines
         painter.drawLine(QPointF(-20, 0), QPointF(20, 0))
         painter.drawLine(QPointF(0, 0), QPointF(0, 20))
-        # Junction dot
-        painter.setBrush(QBrush(QColor("#1a1a8c")))
-        painter.drawEllipse(QPointF(0, 0), 4, 4)
