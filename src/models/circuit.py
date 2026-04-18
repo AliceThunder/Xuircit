@@ -1,0 +1,90 @@
+"""Circuit data model: holds components and wires."""
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+
+class Circuit:
+    """Top-level circuit model holding all components and wires."""
+
+    def __init__(self) -> None:
+        self.components: list[dict[str, Any]] = []
+        self.wires: list[dict[str, Any]] = []
+        self._comp_index: dict[str, dict[str, Any]] = {}
+        self._wire_index: dict[str, dict[str, Any]] = {}
+
+    # ------------------------------------------------------------------
+    # Component management
+    # ------------------------------------------------------------------
+
+    def add_component(self, comp: dict[str, Any]) -> None:
+        """Add a component dict. Must have 'id' key."""
+        if "id" not in comp:
+            comp["id"] = str(uuid.uuid4())
+        self.components.append(comp)
+        self._comp_index[comp["id"]] = comp
+
+    def remove_component(self, comp_id: str) -> None:
+        self.components = [c for c in self.components if c["id"] != comp_id]
+        self._comp_index.pop(comp_id, None)
+
+    def get_component(self, comp_id: str) -> dict[str, Any] | None:
+        return self._comp_index.get(comp_id)
+
+    # ------------------------------------------------------------------
+    # Wire management
+    # ------------------------------------------------------------------
+
+    def add_wire(self, wire: dict[str, Any]) -> None:
+        """Add a wire dict. Must have 'id' key."""
+        if "id" not in wire:
+            wire["id"] = str(uuid.uuid4())
+        self.wires.append(wire)
+        self._wire_index[wire["id"]] = wire
+
+    def remove_wire(self, wire_id: str) -> None:
+        self.wires = [w for w in self.wires if w["id"] != wire_id]
+        self._wire_index.pop(wire_id, None)
+
+    def get_wire(self, wire_id: str) -> dict[str, Any] | None:
+        return self._wire_index.get(wire_id)
+
+    def clear(self) -> None:
+        self.components.clear()
+        self.wires.clear()
+        self._comp_index.clear()
+        self._wire_index.clear()
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "components": [dict(c) for c in self.components],
+            "wires": [dict(w) for w in self.wires],
+        }
+
+    def from_dict(self, data: dict[str, Any]) -> None:
+        self.clear()
+        for comp in data.get("components", []):
+            self.add_component(dict(comp))
+        for wire in data.get("wires", []):
+            self.add_wire(dict(wire))
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def next_ref(self, prefix: str) -> str:
+        """Return next available reference designator, e.g. R3."""
+        existing = {
+            c["ref"]
+            for c in self.components
+            if c.get("ref", "").startswith(prefix)
+        }
+        idx = 1
+        while f"{prefix}{idx}" in existing:
+            idx += 1
+        return f"{prefix}{idx}"
