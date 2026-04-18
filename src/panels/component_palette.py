@@ -24,6 +24,7 @@ class ComponentPalette(QDockWidget):
     """
 
     place_requested = pyqtSignal(str)  # emits comp_type
+    library_changed = pyqtSignal()     # Task 5: emitted after library edits
 
     def __init__(self, parent: object = None) -> None:
         super().__init__("Components", parent)  # type: ignore[arg-type]
@@ -130,4 +131,6 @@ class ComponentPalette(QDockWidget):
         # Refresh palette in case user added/removed libraries or components
         LibraryManager.reset_instance()
         self._populate(self._search.text())
+        # Task 5: notify main window to rebuild the canvas with updated definitions
+        self.library_changed.emit()
 

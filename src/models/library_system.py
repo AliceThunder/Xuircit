@@ -173,17 +173,16 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def _init(self) -> None:
-        """Always build the preset library from hardcoded defaults.
+        """Load all user-defined libraries.
 
-        Fix 2: The preset library is never loaded from or saved to disk.
-        This guarantees the preset always contains correct, consistent
-        component definitions.  User modifications should be made in
-        user-created libraries instead.
+        The preset library has been removed — all components are built by users.
+        Legacy project files that reference built-in type names (R, C, L, …)
+        will still render correctly because the renderer registry in scene.py
+        is kept for backward compatibility.
         """
-        preset = self._build_preset()
-        self._libraries = [preset]
+        self._libraries = []
 
-        # Load other user libraries
+        # Load user libraries
         if _LIBRARIES_DIR.exists():
             for path in sorted(_LIBRARIES_DIR.glob("*.json")):
                 if path.stem == PRESET_LIBRARY_ID:
@@ -239,107 +238,6 @@ class LibraryManager:
             pass
 
     # ------------------------------------------------------------------
-    # Preset library builder (hardcoded defaults)
-    # ------------------------------------------------------------------
-
-    def _build_preset(self) -> CompLibrary:
-        lib = CompLibrary(PRESET_LIBRARY_ID, "Preset Library", is_preset=True)
-        defs = [
-            # ── Passive ──────────────────────────────────────────────
-            ("R", "Passive", "Resistor", "Ideal resistor",
-             ["p", "n"], "1k", {}, "R"),
-            ("C", "Passive", "Capacitor", "Ideal capacitor",
-             ["+", "-"], "100n", {}, "C"),
-            ("L", "Passive", "Inductor", "Ideal inductor",
-             ["p", "n"], "10u", {}, "L"),
-            ("T", "Passive", "Transformer",
-             "Coupled inductors / transformer",
-             ["p1", "p2", "s1", "s2"], "", {}, "T"),
-            # ── Sources ──────────────────────────────────────────────
-            ("V", "Sources", "Voltage Source",
-             "Independent voltage source",
-             ["+", "-"], "5", {}, "V"),
-            ("I", "Sources", "Current Source",
-             "Independent current source",
-             ["+", "-"], "1m", {}, "I"),
-            ("E", "Sources", "VCVS",
-             "Voltage-controlled voltage source",
-             ["+", "-", "nc+", "nc-"], "1", {}, "E"),
-            ("F", "Sources", "CCCS",
-             "Current-controlled current source",
-             ["+", "-", "nc+", "nc-"], "1", {}, "F"),
-            ("G", "Sources", "VCCS",
-             "Voltage-controlled current source",
-             ["+", "-", "nc+", "nc-"], "1", {}, "G"),
-            ("H", "Sources", "CCVS",
-             "Current-controlled voltage source",
-             ["+", "-", "nc+", "nc-"], "1", {}, "H"),
-            # ── Semiconductors ────────────────────────────────────────
-            ("D", "Semiconductors", "Diode",
-             "PN junction diode",
-             ["anode", "cathode"], "1N4148", {}, "D"),
-            ("Z", "Semiconductors", "Zener Diode",
-             "Zener diode",
-             ["anode", "cathode"], "BZX55C5V1", {}, "D"),
-            ("Q_NPN", "Semiconductors", "NPN BJT",
-             "NPN bipolar junction transistor",
-             ["base", "collector", "emitter"], "2N2222", {}, "Q"),
-            ("Q_PNP", "Semiconductors", "PNP BJT",
-             "PNP bipolar junction transistor",
-             ["base", "collector", "emitter"], "2N2907", {}, "Q"),
-            ("M_NMOS", "Semiconductors", "NMOS FET",
-             "N-channel MOSFET",
-             ["gate", "drain", "source", "body"], "IRF540", {}, "M"),
-            ("M_PMOS", "Semiconductors", "PMOS FET",
-             "P-channel MOSFET",
-             ["gate", "drain", "source", "body"], "IRF9540", {}, "M"),
-            ("IGBT", "Semiconductors", "IGBT",
-             "Insulated-gate bipolar transistor",
-             ["gate", "collector", "emitter"], "IRGB4062", {}, "Q"),
-            # ── Power Electronics ─────────────────────────────────────
-            ("SW", "Power Electronics", "Ideal Switch",
-             "Ideal controlled switch",
-             ["p", "n"], "", {}, "SW"),
-            ("SCR", "Power Electronics", "SCR / Thyristor",
-             "Silicon controlled rectifier",
-             ["anode", "cathode", "gate"], "TYN612", {}, "SCR"),
-            ("TRIAC", "Power Electronics", "TRIAC",
-             "Bidirectional thyristor",
-             ["MT1", "MT2", "gate"], "BTA12", {}, "TRIAC"),
-            # ── Wiring ────────────────────────────────────────────────
-            ("GND", "Wiring", "Ground",
-             "Ground / reference node",
-             ["p"], "", {}, "GND"),
-            ("NETLABEL", "Wiring", "Net Label",
-             "Named net label",
-             ["p"], "", {}, "NET"),
-            ("JUNCTION", "Wiring", "Junction",
-             "Wire junction dot",
-             [], "", {}, "J"),
-            ("ELBOW", "Wiring", "Elbow (90° bend)",
-             "Right-angle wire connector — connects two wires at a 90° corner",
-             ["a", "b"], "", {}, "J"),
-            ("TEE", "Wiring", "Tee (T-junction)",
-             "T-junction wire connector — connects three wires",
-             ["left", "right", "down"], "", {}, "J"),
-        ]
-        for (tn, cat, disp, desc, pins, val, params, pfx) in defs:
-            lib.add(LibEntry(
-                type_name=tn,
-                display_name=disp,
-                category=cat,
-                description=desc,
-                ref_prefix=pfx,
-                default_value=val,
-                default_params=params,
-                pin_names=pins,
-                pins=[],
-                symbol=[],
-                is_builtin=True,
-            ))
-        return lib
-
-    # ------------------------------------------------------------------
     # Access
     # ------------------------------------------------------------------
 
@@ -383,8 +281,6 @@ class LibraryManager:
         return lib
 
     def remove_library(self, library_id: str) -> None:
-        if library_id == PRESET_LIBRARY_ID:
-            return  # Preset library cannot be removed
         lib = self.get_library(library_id)
         if lib:
             self._libraries.remove(lib)
@@ -423,10 +319,6 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def _save_library(self, lib: CompLibrary) -> None:
-        # Fix 2: Never save the preset library to disk; it is always rebuilt
-        # from hardcoded defaults on startup.
-        if lib.library_id == PRESET_LIBRARY_ID:
-            return
         try:
             _LIBRARIES_DIR.mkdir(parents=True, exist_ok=True)
             path = _LIBRARIES_DIR / f"{lib.library_id}.json"

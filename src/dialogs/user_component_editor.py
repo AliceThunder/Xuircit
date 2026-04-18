@@ -7,7 +7,7 @@ from typing import Any
 from PyQt6.QtCore import QPointF, QRectF, Qt, QObject, QEvent
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QPainter, QPen, QKeySequence, QUndoCommand,
-    QUndoStack,
+    QUndoStack, QPolygonF,
 )
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -106,6 +106,9 @@ class _SymbolScene(QGraphicsScene):
         # Feature #3: polyline drawing state
         self._poly_points: list[QPointF] = []
         self._poly_segs: list[QGraphicsItem] = []  # temporary segment items
+        # Task 2: property position markers (Ref = Basic Property, Val = Extra Property)
+        self._ref_marker: "_PropertyMarkerItem | None" = None
+        self._val_marker: "_PropertyMarkerItem | None" = None
         self._draw_origin()
 
     def _draw_origin(self) -> None:
@@ -566,6 +569,30 @@ class _SymbolScene(QGraphicsScene):
         self.addItem(marker)
         self.pins.append(marker)
 
+    # ------------------------------------------------------------------
+    # Task 2: property label position markers
+    # ------------------------------------------------------------------
+
+    def set_ref_marker(self, dx: float, dy: float,
+                       on_moved: "object | None" = None) -> None:
+        """Place or move the Ref (Basic Property) position marker."""
+        if self._ref_marker is None:
+            self._ref_marker = _PropertyMarkerItem(
+                "⊕ Ref (Basic)", QColor("#c05000"), on_moved
+            )
+            self.addItem(self._ref_marker)
+        self._ref_marker.setPos(dx, dy)
+
+    def set_val_marker(self, dx: float, dy: float,
+                       on_moved: "object | None" = None) -> None:
+        """Place or move the Val (Extra Property) position marker."""
+        if self._val_marker is None:
+            self._val_marker = _PropertyMarkerItem(
+                "⊕ Val (Extra)", QColor("#007700"), on_moved
+            )
+            self.addItem(self._val_marker)
+        self._val_marker.setPos(dx, dy)
+
     def clear_symbol(self) -> None:
         for item in list(self.items()):
             self.removeItem(item)
@@ -576,6 +603,9 @@ class _SymbolScene(QGraphicsScene):
         self._temp_item = None
         self._poly_points.clear()
         self._poly_segs.clear()
+        # Property markers are removed by the clear above; reset references
+        self._ref_marker = None
+        self._val_marker = None
         self._draw_origin()
 
     def load_def(self, udef: UserCompDef) -> None:
@@ -641,6 +671,64 @@ class _PinMarker(QGraphicsEllipseItem):
         lbl.setDefaultTextColor(QColor("#0044aa"))
         lbl.setFont(QFont("monospace", 6))
         lbl.setPos(r + 1, -r)
+
+
+class _PropertyMarkerItem(QGraphicsItem):
+    """Draggable marker that shows the default position of a label (Ref or Val).
+
+    Task 2: marks Basic Property (ref) and Extra Property (val) positions
+    in the component editor drawing area with a special symbol so users can
+    see where their labels will appear and drag them to adjust the offset.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        color: "QColor",
+        on_moved: "object | None" = None,
+    ) -> None:
+        super().__init__()
+        self._label = label
+        self._color = color
+        self._on_moved = on_moved
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+        self.setZValue(50)
+
+    def boundingRect(self) -> "QRectF":
+        return QRectF(-10, -10, 70, 22)
+
+    def paint(
+        self,
+        painter: "QPainter",
+        option: "object",
+        widget: "object" = None,
+    ) -> None:
+        # Draw a distinctive diamond marker + label text
+        pen = QPen(self._color, 1.5)
+        painter.setPen(pen)
+        s = 6
+        # Diamond shape
+        diamond = QPolygonF([
+            QPointF(0, -s), QPointF(s, 0),
+            QPointF(0, s), QPointF(-s, 0),
+        ])
+        painter.setBrush(QBrush(self._color))
+        painter.drawPolygon(diamond)
+        # Label
+        painter.setPen(QPen(self._color, 1))
+        painter.setFont(QFont("monospace", 7))
+        painter.drawText(QPointF(s + 3, 4), self._label)
+
+    def itemChange(
+        self, change: "QGraphicsItem.GraphicsItemChange", value: "object"
+    ) -> "object":
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            if self._on_moved is not None:
+                p = value  # type: ignore[assignment]
+                self._on_moved(p.x(), p.y())  # type: ignore[union-attr]
+        return super().itemChange(change, value)
 
 
 # ---------------------------------------------------------------------------
@@ -831,6 +919,7 @@ class UserComponentEditorDialog(QDialog):
         lbl = QLabel(
             "Draw symbol (hover the canvas to reveal tool icons).\n"
             "Pins snap to grid. Other shapes snap to sub-grid.\n"
+            "⊕ Ref (orange) = Basic Property position  ⊕ Val (green) = Extra Property position.\n"
             "Keys: Del=delete  Ctrl+C/V=copy/paste  M=mirror  Arrows=move  "
             "Ctrl+Z/Y=undo/redo  Right-click=cancel drawing."
         )
@@ -1040,11 +1129,57 @@ class UserComponentEditorDialog(QDialog):
             self._refresh_label_list()
             self._refresh_pin_list()
 
+        # Task 2: initialize property markers in the drawing area
+        # These markers show where Ref (Basic Property) and Val (Extra Property)
+        # labels will appear relative to the component origin.
+        self._init_property_markers()
+
+        # Connect spin boxes to update markers when values change
+        self._ref_dx_spin.valueChanged.connect(self._sync_ref_marker_from_spins)
+        self._ref_dy_spin.valueChanged.connect(self._sync_ref_marker_from_spins)
+        self._val_dx_spin.valueChanged.connect(self._sync_val_marker_from_spins)
+        self._val_dy_spin.valueChanged.connect(self._sync_val_marker_from_spins)
+
+    def _init_property_markers(self) -> None:
+        """Task 2: place property-position markers on the symbol canvas."""
+        rdx, rdy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
+        vdx, vdy = self._val_dx_spin.value(), self._val_dy_spin.value()
+        self._sym_scene.set_ref_marker(rdx, rdy, self._on_ref_marker_moved)
+        self._sym_scene.set_val_marker(vdx, vdy, self._on_val_marker_moved)
+
+    def _sync_ref_marker_from_spins(self) -> None:
+        """Move the Ref marker when the spin boxes change."""
+        dx, dy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
+        if self._sym_scene._ref_marker is not None:
+            self._sym_scene._ref_marker.setPos(dx, dy)
+
+    def _sync_val_marker_from_spins(self) -> None:
+        """Move the Val marker when the spin boxes change."""
+        dx, dy = self._val_dx_spin.value(), self._val_dy_spin.value()
+        if self._sym_scene._val_marker is not None:
+            self._sym_scene._val_marker.setPos(dx, dy)
+
+    def _on_ref_marker_moved(self, x: float, y: float) -> None:
+        """Update spin boxes when the Ref marker is dragged."""
+        self._ref_dx_spin.blockSignals(True)
+        self._ref_dy_spin.blockSignals(True)
+        self._ref_dx_spin.setValue(x)
+        self._ref_dy_spin.setValue(y)
+        self._ref_dx_spin.blockSignals(False)
+        self._ref_dy_spin.blockSignals(False)
+
+    def _on_val_marker_moved(self, x: float, y: float) -> None:
+        """Update spin boxes when the Val marker is dragged."""
+        self._val_dx_spin.blockSignals(True)
+        self._val_dy_spin.blockSignals(True)
+        self._val_dx_spin.setValue(x)
+        self._val_dy_spin.setValue(y)
+        self._val_dx_spin.blockSignals(False)
+        self._val_dy_spin.blockSignals(False)
+
     # ------------------------------------------------------------------
     # Issue 1: built-in component preview
     # ------------------------------------------------------------------
-
-    def _load_builtin_preview(self, entry: LibEntry) -> None:
         """Show the actual rendered component in the symbol scene (read-only)."""
         try:
             from ..canvas.scene import create_component_item
@@ -1354,10 +1489,6 @@ class LibraryManagerDialog(QDialog):
     def _delete_library(self) -> None:
         lib = self._current_lib()
         if lib is None:
-            return
-        if lib.is_preset:
-            QMessageBox.warning(self, "Delete Library",
-                                "The Preset Library cannot be deleted.")
             return
         reply = QMessageBox.question(
             self, "Delete Library",
