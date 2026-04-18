@@ -20,6 +20,7 @@ class UserComponentItem(ComponentItem):
         value: str = "",
         params: dict[str, Any] | None = None,
         comp_id: str | None = None,
+        library_id: str | None = None,
     ) -> None:
         self._udef = udef
         # Compute bounding box from pin and symbol extents
@@ -41,7 +42,8 @@ class UserComponentItem(ComponentItem):
         # Apply label offsets from the user component definition
         self._ref_label_offset = tuple(udef.ref_label_offset)  # type: ignore[assignment]
         self._val_label_offset = tuple(udef.val_label_offset)  # type: ignore[assignment]
-        super().__init__(udef.type_name, ref, value, params, comp_id)
+        super().__init__(udef.type_name, ref, value, params, comp_id,
+                         library_id=library_id)
 
     # ------------------------------------------------------------------
     # Pin definitions from user data

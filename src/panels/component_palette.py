@@ -14,12 +14,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..models.component_library import ComponentLibrary
-from ..models.user_library import UserLibrary
+from ..models.library_system import LibraryManager
 
 
 class ComponentPalette(QDockWidget):
-    """Left dock: categorized list of components with search."""
+    """Left dock: categorized list of components with search.
+
+    Components are grouped first by library, then by category within
+    each library.
+    """
 
     place_requested = pyqtSignal(str)  # emits comp_type
 
@@ -53,67 +56,65 @@ class ComponentPalette(QDockWidget):
         place_btn.clicked.connect(self._on_place_clicked)
         btn_row.addWidget(place_btn)
 
-        manage_btn = QPushButton("Manage Library…")
-        manage_btn.setToolTip("Create / edit / delete user-defined components")
+        manage_btn = QPushButton("Manage Libraries…")
+        manage_btn.setToolTip("Add / remove libraries and components")
         manage_btn.clicked.connect(self._on_manage)
         btn_row.addWidget(manage_btn)
         layout.addLayout(btn_row)
 
         self.setWidget(widget)
+        self._tree.itemDoubleClicked.connect(self._on_double_click)
         self._populate()
 
     def _populate(self, filter_text: str = "") -> None:
         self._tree.clear()
         ft = filter_text.strip().lower()
 
-        # ── built-in library ──────────────────────────────────────────
-        lib = ComponentLibrary()
-        for cat in lib.categories():
-            defs = lib.by_category(cat)
-            if ft:
-                defs = [d for d in defs
-                        if ft in d.display_name.lower()
-                        or ft in d.type_name.lower()]
-            if not defs:
+        lm = LibraryManager()
+        for lib in lm.all_libraries():
+            # Collect matching entries for this library
+            matching = [
+                e for e in lib.all()
+                if not ft
+                or ft in e.display_name.lower()
+                or ft in e.type_name.lower()
+            ]
+            if not matching:
                 continue
-            cat_item = self._make_category(cat)
-            for cdef in defs:
-                child = QTreeWidgetItem([cdef.display_name])
-                child.setData(0, Qt.ItemDataRole.UserRole, cdef.type_name)
-                child.setToolTip(0, cdef.description)
-                cat_item.addChild(child)
-            cat_item.setExpanded(True)
 
-        # ── user-defined components ───────────────────────────────────
-        ulib = UserLibrary()
-        udefs = ulib.all()
-        if ft:
-            udefs = [d for d in udefs
-                     if ft in d.display_name.lower()
-                     or ft in d.type_name.lower()]
-        if udefs:
-            # Group by user-defined category
+            # Library root node
+            lib_item = QTreeWidgetItem([lib.name])
+            lib_item.setFlags(lib_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            font = lib_item.font(0)
+            font.setBold(True)
+            font.setPointSize(font.pointSize() + 1)
+            lib_item.setFont(0, font)
+            self._tree.addTopLevelItem(lib_item)
+
+            # Group by category
             cats: dict[str, list] = {}
-            for u in udefs:
-                cats.setdefault(u.category, []).append(u)
-            for cat_name, items in cats.items():
-                cat_item = self._make_category(cat_name)
-                for u in items:
-                    child = QTreeWidgetItem([u.display_name])
-                    child.setData(0, Qt.ItemDataRole.UserRole, u.type_name)
-                    child.setToolTip(0, u.description)
+            for e in matching:
+                cats.setdefault(e.category, []).append(e)
+
+            for cat_name, entries in cats.items():
+                cat_item = self._make_category(cat_name, lib_item)
+                for e in entries:
+                    child = QTreeWidgetItem([e.display_name])
+                    child.setData(0, Qt.ItemDataRole.UserRole, e.type_name)
+                    child.setToolTip(0, e.description)
                     cat_item.addChild(child)
                 cat_item.setExpanded(True)
 
-        self._tree.itemDoubleClicked.connect(self._on_double_click)
+            lib_item.setExpanded(True)
 
-    def _make_category(self, name: str) -> QTreeWidgetItem:
+    def _make_category(self, name: str,
+                        parent: QTreeWidgetItem) -> QTreeWidgetItem:
         cat_item = QTreeWidgetItem([name])
         cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         font = cat_item.font(0)
         font.setBold(True)
         cat_item.setFont(0, font)
-        self._tree.addTopLevelItem(cat_item)
+        parent.addChild(cat_item)
         return cat_item
 
     def _on_search(self, text: str) -> None:
@@ -132,8 +133,10 @@ class ComponentPalette(QDockWidget):
                 self.place_requested.emit(comp_type)
 
     def _on_manage(self) -> None:
-        from ..dialogs.user_component_editor import UserLibraryManagerDialog
-        dlg = UserLibraryManagerDialog(self.widget())
+        from ..dialogs.user_component_editor import LibraryManagerDialog
+        dlg = LibraryManagerDialog(self.widget())
         dlg.exec()
-        # Refresh palette in case user added/removed components
+        # Refresh palette in case user added/removed libraries or components
+        LibraryManager.reset_instance()
         self._populate(self._search.text())
+

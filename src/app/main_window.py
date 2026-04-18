@@ -326,16 +326,11 @@ class MainWindow(QMainWindow):
         """Sync scene item state (rotation, flip, label positions) back to the
         circuit model so that saves and exports are always up to date."""
         from ..components.base import ComponentItem
-        from ..components.wire import WireItem
         for item in self._scene.items():
             if isinstance(item, ComponentItem):
                 comp = self._circuit.get_component(item.component_id)
                 if comp is not None:
                     comp.update(item.to_dict())
-            elif isinstance(item, WireItem):
-                wire = self._circuit.get_wire(item.wire_id)
-                if wire is not None:
-                    wire.update(item.to_dict())
 
     def _import_netlist(self) -> None:
         from ..dialogs.import_dialog import ImportDialog
@@ -387,19 +382,26 @@ class MainWindow(QMainWindow):
             item.setSelected(True)
 
     def _delete_selected(self) -> None:
+        changed = False
         for item in list(self._scene.selectedItems()):
             if isinstance(item, ComponentItem):
                 self._circuit.remove_component(item.component_id)
+                changed = True
             elif isinstance(item, WireItem):
                 self._circuit.remove_wire(item.wire_id)
             self._scene.removeItem(item)
+        if changed:
+            self._scene._rebuild_auto_wires()
         self._modified = True
         self._update_title()
 
     def _rotate_selected_cw(self) -> None:
+        changed = False
         for item in self._scene.selectedItems():
             if isinstance(item, ComponentItem):
                 item._rotate_cw()
+                changed = True
+        # Wire rebuild is triggered by ComponentItem._rotate_cw via _notify_scene_changed
 
     def _flip_selected_h(self) -> None:
         for item in self._scene.selectedItems():
@@ -416,10 +418,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _manage_user_library(self) -> None:
-        from ..dialogs.user_component_editor import UserLibraryManagerDialog
-        dlg = UserLibraryManagerDialog(self)
+        from ..dialogs.user_component_editor import LibraryManagerDialog
+        from ..models.library_system import LibraryManager
+        dlg = LibraryManagerDialog(self)
         dlg.exec()
-        # Refresh palette after any changes
+        # Reset singleton and refresh palette after any changes
+        LibraryManager.reset_instance()
         self._palette._populate(self._palette._search.text())
 
     # ------------------------------------------------------------------

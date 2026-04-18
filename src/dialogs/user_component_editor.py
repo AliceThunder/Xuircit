@@ -1,4 +1,4 @@
-"""User Component Editor — create and edit user-defined schematic components."""
+"""User Component Editor — create and edit schematic components across libraries."""
 from __future__ import annotations
 
 from typing import Any
@@ -18,9 +18,11 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -28,7 +30,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..models.user_library import PinDef, SymbolCmd, UserCompDef, UserLibrary
+from ..models.user_library import PinDef, SymbolCmd, UserCompDef
+from ..models.library_system import LibEntry, LibraryManager, PRESET_LIBRARY_ID
 from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
 
 
@@ -186,13 +189,15 @@ class UserComponentEditorDialog(QDialog):
     """Dialog to create or edit a user-defined schematic component."""
 
     def __init__(self, parent: QWidget | None = None,
-                 existing: UserCompDef | None = None) -> None:
+                 existing: LibEntry | None = None,
+                 library_id: str | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(
-            "Edit User Component" if existing else "Create User Component"
+            "Edit Component" if existing else "Create Component"
         )
         self.resize(900, 650)
         self._existing = existing
+        self._library_id = library_id or PRESET_LIBRARY_ID
 
         # ── root layout ──────────────────────────────────────────────
         root = QHBoxLayout(self)
@@ -203,7 +208,9 @@ class UserComponentEditorDialog(QDialog):
 
         lbl = QLabel(
             "Draw symbol (click tools below).\n"
-            "Pins snap to grid and become connection points."
+            "Pins snap to grid and become connection points.\n"
+            "Note: built-in preset components use hardcoded rendering; "
+            "only metadata fields apply to them."
         )
         lbl.setWordWrap(True)
         left.addWidget(lbl)
@@ -287,7 +294,19 @@ class UserComponentEditorDialog(QDialog):
             self._desc_edit.setText(existing.description)
             self._prefix_edit.setText(existing.ref_prefix)
             self._value_edit.setText(existing.default_value)
-            self._sym_scene.load_def(existing)
+            if not existing.is_builtin:
+                # Load custom symbol only for user-defined entries
+                _sym_udef = UserCompDef(
+                    type_name=existing.type_name,
+                    display_name=existing.display_name,
+                    category=existing.category,
+                    description=existing.description,
+                    ref_prefix=existing.ref_prefix,
+                    default_value=existing.default_value,
+                    pins=[PinDef(**p) for p in existing.pins],
+                    symbol=[SymbolCmd(**s) for s in existing.symbol],
+                )
+                self._sym_scene.load_def(_sym_udef)
             self._refresh_pin_list()
 
     # ------------------------------------------------------------------
@@ -298,7 +317,6 @@ class UserComponentEditorDialog(QDialog):
             self._pin_list.addItem(marker.pin_name)
 
     def _rename_pin(self, item: Any) -> None:
-        from PyQt6.QtWidgets import QInputDialog
         row = self._pin_list.row(item)
         if 0 <= row < len(self._sym_scene.pins):
             marker = self._sym_scene.pins[row]
@@ -307,7 +325,6 @@ class UserComponentEditorDialog(QDialog):
             if ok and new_name.strip():
                 marker.pin_name = new_name.strip()
                 item.setText(new_name.strip())
-                # Update label inside the marker
                 for child in marker.childItems():
                     if isinstance(child, QGraphicsTextItem):
                         child.setPlainText(new_name.strip())
@@ -319,98 +336,210 @@ class UserComponentEditorDialog(QDialog):
             QMessageBox.warning(self, "Validation", "Type name is required.")
             return
 
-        pins = []
+        pins_pos = []
         for marker in self._sym_scene.pins:
-            pins.append(PinDef(
-                name=marker.pin_name,
-                x=marker.pos().x(),
-                y=marker.pos().y(),
-            ))
+            pins_pos.append({
+                "name": marker.pin_name,
+                "x": marker.pos().x(),
+                "y": marker.pos().y(),
+            })
 
-        udef = UserCompDef(
+        # Preserve is_builtin if editing a built-in component (only meta changes)
+        is_builtin = False
+        if self._existing is not None:
+            is_builtin = self._existing.is_builtin
+
+        entry = LibEntry(
             type_name=type_name,
             display_name=display,
             category=self._cat_edit.text().strip() or "User",
             description=self._desc_edit.text().strip(),
             ref_prefix=self._prefix_edit.text().strip() or "U",
             default_value=self._value_edit.text().strip(),
-            pins=pins,
-            symbol=list(self._sym_scene.sym_cmds),
+            pin_names=[p["name"] for p in pins_pos] if is_builtin else [],
+            pins=pins_pos if not is_builtin else [],
+            symbol=[s.__dict__ for s in self._sym_scene.sym_cmds] if not is_builtin else [],
+            is_builtin=is_builtin,
         )
 
-        ulib = UserLibrary()
-        ulib.save_def(udef)
-        # Reset singleton so palette picks up the change
-        UserLibrary.reset_instance()
+        lm = LibraryManager()
+        lm.save_entry(self._library_id, entry)
 
         self.accept()
 
 
 # ---------------------------------------------------------------------------
-# Manager dialog (list existing + create/edit/delete)
+# Multi-library manager dialog
 # ---------------------------------------------------------------------------
 
-class UserLibraryManagerDialog(QDialog):
-    """Browse and manage user-defined components."""
+class LibraryManagerDialog(QDialog):
+    """Manage all component libraries: add/remove libraries, add/edit/delete
+    components within any library (including the preset library).
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("User Component Library")
-        self.resize(500, 350)
+        self.setWindowTitle("Component Library Manager")
+        self.resize(800, 500)
 
-        layout = QVBoxLayout(self)
+        root = QHBoxLayout(self)
 
-        self._list = QListWidget()
-        layout.addWidget(self._list)
+        # ── Left: library list ────────────────────────────────────────
+        left = QVBoxLayout()
+        root.addLayout(left, 1)
 
-        btn_row = QHBoxLayout()
-        new_btn = QPushButton("New Component…")
-        edit_btn = QPushButton("Edit…")
-        del_btn = QPushButton("Delete")
-        new_btn.clicked.connect(self._new)
-        edit_btn.clicked.connect(self._edit)
-        del_btn.clicked.connect(self._delete)
-        for b in (new_btn, edit_btn, del_btn):
-            btn_row.addWidget(b)
-        layout.addLayout(btn_row)
+        left.addWidget(QLabel("Libraries:"))
+        self._lib_list = QListWidget()
+        self._lib_list.currentRowChanged.connect(self._on_lib_selected)
+        left.addWidget(self._lib_list)
+
+        lib_btns = QHBoxLayout()
+        self._add_lib_btn = QPushButton("Add Library")
+        self._add_lib_btn.clicked.connect(self._add_library)
+        self._del_lib_btn = QPushButton("Delete Library")
+        self._del_lib_btn.clicked.connect(self._delete_library)
+        self._ren_lib_btn = QPushButton("Rename…")
+        self._ren_lib_btn.clicked.connect(self._rename_library)
+        for b in (self._add_lib_btn, self._del_lib_btn, self._ren_lib_btn):
+            lib_btns.addWidget(b)
+        left.addLayout(lib_btns)
+
+        # ── Right: component list ─────────────────────────────────────
+        right = QVBoxLayout()
+        root.addLayout(right, 2)
+
+        right.addWidget(QLabel("Components in selected library:"))
+        self._comp_list = QListWidget()
+        right.addWidget(self._comp_list)
+
+        comp_btns = QHBoxLayout()
+        self._new_comp_btn = QPushButton("New Component…")
+        self._new_comp_btn.clicked.connect(self._new_component)
+        self._edit_comp_btn = QPushButton("Edit…")
+        self._edit_comp_btn.clicked.connect(self._edit_component)
+        self._del_comp_btn = QPushButton("Delete")
+        self._del_comp_btn.clicked.connect(self._delete_component)
+        for b in (self._new_comp_btn, self._edit_comp_btn, self._del_comp_btn):
+            comp_btns.addWidget(b)
+        right.addLayout(comp_btns)
 
         close_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        close_btn.rejected.connect(self.reject)
-        layout.addWidget(close_btn)
+        close_btn.rejected.connect(self.accept)
+        right.addWidget(close_btn)
 
-        self._refresh()
+        self._refresh_libs()
 
-    def _refresh(self) -> None:
-        self._list.clear()
-        ulib = UserLibrary()
-        for udef in ulib.all():
-            self._list.addItem(f"{udef.display_name}  [{udef.type_name}]")
-        self._udefs = ulib.all()
+    # ── Library helpers ────────────────────────────────────────────────
 
-    def _new(self) -> None:
-        dlg = UserComponentEditorDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._refresh()
+    def _refresh_libs(self) -> None:
+        self._lib_list.clear()
+        lm = LibraryManager()
+        self._libs = lm.all_libraries()
+        for lib in self._libs:
+            tag = " [Preset]" if lib.is_preset else ""
+            self._lib_list.addItem(f"{lib.name}{tag}")
+        if self._libs:
+            self._lib_list.setCurrentRow(0)
+            self._refresh_comps(0)
 
-    def _edit(self) -> None:
-        row = self._list.currentRow()
-        if row < 0 or row >= len(self._udefs):
+    def _current_lib(self):
+        row = self._lib_list.currentRow()
+        if 0 <= row < len(self._libs):
+            return self._libs[row]
+        return None
+
+    def _on_lib_selected(self, row: int) -> None:
+        self._refresh_comps(row)
+
+    def _add_library(self) -> None:
+        name, ok = QInputDialog.getText(self, "New Library", "Library name:")
+        if ok and name.strip():
+            lm = LibraryManager()
+            lm.add_library(name.strip())
+            self._refresh_libs()
+
+    def _delete_library(self) -> None:
+        lib = self._current_lib()
+        if lib is None:
             return
-        dlg = UserComponentEditorDialog(self, existing=self._udefs[row])
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._refresh()
-
-    def _delete(self) -> None:
-        row = self._list.currentRow()
-        if row < 0 or row >= len(self._udefs):
+        if lib.is_preset:
+            QMessageBox.warning(self, "Delete Library",
+                                "The Preset Library cannot be deleted.")
             return
-        udef = self._udefs[row]
         reply = QMessageBox.question(
-            self, "Delete", f"Delete component '{udef.display_name}'?",
+            self, "Delete Library",
+            f"Delete library '{lib.name}' and all its components?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            ulib = UserLibrary()
-            ulib.delete_def(udef.type_name)
-            UserLibrary.reset_instance()
-            self._refresh()
+            lm = LibraryManager()
+            lm.remove_library(lib.library_id)
+            self._refresh_libs()
+
+    def _rename_library(self) -> None:
+        lib = self._current_lib()
+        if lib is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename Library", "New name:", text=lib.name)
+        if ok and name.strip():
+            lm = LibraryManager()
+            lm.rename_library(lib.library_id, name.strip())
+            self._refresh_libs()
+
+    # ── Component helpers ──────────────────────────────────────────────
+
+    def _refresh_comps(self, lib_row: int | None = None) -> None:
+        self._comp_list.clear()
+        lib = self._current_lib()
+        if lib is None:
+            self._entries: list[LibEntry] = []
+            return
+        self._entries = lib.all()
+        for e in self._entries:
+            tag = " [built-in]" if e.is_builtin else ""
+            self._comp_list.addItem(f"{e.display_name}  [{e.type_name}]{tag}")
+
+    def _new_component(self) -> None:
+        lib = self._current_lib()
+        if lib is None:
+            QMessageBox.warning(self, "New Component",
+                                "Please select a library first.")
+            return
+        dlg = UserComponentEditorDialog(self, library_id=lib.library_id)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_comps()
+
+    def _edit_component(self) -> None:
+        lib = self._current_lib()
+        row = self._comp_list.currentRow()
+        if lib is None or row < 0 or row >= len(self._entries):
+            return
+        entry = self._entries[row]
+        dlg = UserComponentEditorDialog(
+            self, existing=entry, library_id=lib.library_id)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_comps()
+
+    def _delete_component(self) -> None:
+        lib = self._current_lib()
+        row = self._comp_list.currentRow()
+        if lib is None or row < 0 or row >= len(self._entries):
+            return
+        entry = self._entries[row]
+        reply = QMessageBox.question(
+            self, "Delete Component",
+            f"Delete component '{entry.display_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            lm = LibraryManager()
+            lm.delete_entry(lib.library_id, entry.type_name)
+            self._refresh_comps()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias
+# ---------------------------------------------------------------------------
+
+UserLibraryManagerDialog = LibraryManagerDialog
