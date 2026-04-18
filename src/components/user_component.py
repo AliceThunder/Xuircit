@@ -32,6 +32,11 @@ class UserComponentItem(ComponentItem):
         for s in udef.symbol:
             all_x += [s.x1, s.x2, s.x1 + s.w]
             all_y += [s.y1, s.y2, s.y1 + s.h]
+            # Feature #3: include polyline points in bounding box
+            for pt in s.points:
+                if len(pt) >= 2:
+                    all_x.append(pt[0])
+                    all_y.append(pt[1])
         if all_x and all_y:
             w = max(60.0, abs(max(all_x)) * 2, abs(min(all_x)) * 2)
             h = max(40.0, abs(max(all_y)) * 2, abs(min(all_y)) * 2)
@@ -168,7 +173,7 @@ class UserComponentItem(ComponentItem):
     # ------------------------------------------------------------------
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
         if not self._udef.symbol:
@@ -196,10 +201,10 @@ class UserComponentItem(ComponentItem):
 
         # Render from stored commands
         for cmd in self._udef.symbol:
-            painter.setPen(_std_pen())
+            painter.setPen(_std_pen(self._color))
             # Issue 6: support solid (filled) shapes
             if cmd.filled:
-                painter.setBrush(QBrush(QColor("#333333")))
+                painter.setBrush(QBrush(QColor(self._color)))
             else:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
             if cmd.kind == "line":
@@ -215,4 +220,17 @@ class UserComponentItem(ComponentItem):
                 painter.setFont(QFont("monospace", 8))
                 painter.setPen(QPen(QColor("#333")))
                 painter.drawText(QPointF(cmd.x1, cmd.y1), cmd.text)
+            elif cmd.kind == "polyline":
+                # Feature #3: multi-segment polyline
+                pts = cmd.points
+                if len(pts) >= 2:
+                    from PyQt6.QtGui import QPainterPath
+                    path = QPainterPath()
+                    path.moveTo(QPointF(pts[0][0], pts[0][1]))
+                    for px, py in pts[1:]:
+                        path.lineTo(QPointF(px, py))
+                    if cmd.filled and len(pts) >= 3:
+                        path.closeSubpath()
+                        painter.fillPath(path, QBrush(QColor(self._color)))
+                    painter.drawPath(path)
 

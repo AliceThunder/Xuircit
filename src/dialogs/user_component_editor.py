@@ -13,10 +13,12 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsLineItem,
+    QGraphicsPathItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
@@ -86,7 +88,7 @@ class _SymbolScene(QGraphicsScene):
         super().__init__()
         self.setSceneRect(QRectF(-200, -200, 400, 400))
         self.setBackgroundBrush(QColor("#f8f8f8"))
-        # tools: "select" | "line" | "rect" | "ellipse" | "pin"
+        # tools: "select" | "line" | "rect" | "ellipse" | "pin" | "polyline"
         self._tool: str = "select"
         self._fill_mode: bool = False  # Issue 6: solid fill toggle
         self._line_start: QPointF | None = None
@@ -99,6 +101,9 @@ class _SymbolScene(QGraphicsScene):
         self._sym_clipboard: list[SymbolCmd] = []
         # Issue 6: undo stack
         self._undo_stack = QUndoStack(self)
+        # Feature #3: polyline drawing state
+        self._poly_points: list[QPointF] = []
+        self._poly_segs: list[QGraphicsItem] = []  # temporary segment items
         self._draw_origin()
 
     def _draw_origin(self) -> None:
@@ -137,9 +142,8 @@ class _SymbolScene(QGraphicsScene):
             y += SUB_GRID
 
     def set_tool(self, tool: str) -> None:
+        self._cancel_draw()  # Cancel any in-progress draw when switching tools
         self._tool = tool
-        if tool == "select":
-            self._cancel_draw()
 
     def _cancel_draw(self) -> None:
         """Cancel any in-progress drawing operation."""
@@ -147,6 +151,11 @@ class _SymbolScene(QGraphicsScene):
         if self._temp_item:
             self.removeItem(self._temp_item)
             self._temp_item = None
+        # Feature #3: cancel polyline drawing
+        for seg in self._poly_segs:
+            self.removeItem(seg)
+        self._poly_segs.clear()
+        self._poly_points.clear()
 
     # ------------------------------------------------------------------
     # Undo/redo helpers (Issue 6)
@@ -185,6 +194,24 @@ class _SymbolScene(QGraphicsScene):
                          else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addEllipse(
                     QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h), pen, brush)
+            elif cmd.kind == "polyline":
+                # Feature #3: render polyline in the symbol editor
+                from PyQt6.QtGui import QPainterPath
+                pts = cmd.points
+                if len(pts) >= 2:
+                    path = QPainterPath()
+                    path.moveTo(pts[0][0], pts[0][1])
+                    for px, py in pts[1:]:
+                        path.lineTo(px, py)
+                    if cmd.filled and len(pts) >= 3:
+                        path.closeSubpath()
+                    it = QGraphicsPathItem(path)
+                    it.setPen(pen)
+                    if cmd.filled and len(pts) >= 3:
+                        it.setBrush(QBrush(QColor("#333333")))
+                    self.addItem(it)
+                else:
+                    it = self.addLine(0, 0, 0, 0, pen)
             else:
                 it = self.addLine(0, 0, 0, 0, pen)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -206,9 +233,12 @@ class _SymbolScene(QGraphicsScene):
 
     def mousePressEvent(self, event: Any) -> None:
         pos = event.scenePos()
-        # Issue 6: right-click cancels any ongoing drawing
+        # Issue 6: right-click finishes polyline (if active) or cancels drawing
         if event.button() == Qt.MouseButton.RightButton:
-            self._cancel_draw()
+            if self._tool == "polyline" and len(self._poly_points) >= 2:
+                self._finish_polyline()
+            else:
+                self._cancel_draw()
             return
 
         sx, sy = snap_to_grid(pos.x(), pos.y())
@@ -224,6 +254,19 @@ class _SymbolScene(QGraphicsScene):
             before = self._snapshot()
             self._place_pin(snapped)
             self._push_undo("Add Pin", before, self._snapshot())
+        elif self._tool == "polyline":
+            # Feature #3: multi-segment polyline
+            self._poly_points.append(draw_pos)
+            if len(self._poly_points) >= 2:
+                # Draw the confirmed segment
+                pen = QPen(QColor("#111111"), 2)
+                p1, p2 = self._poly_points[-2], self._poly_points[-1]
+                seg = self.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
+                self._poly_segs.append(seg)
+            # Remove old preview
+            if self._temp_item:
+                self.removeItem(self._temp_item)
+                self._temp_item = None
         elif self._tool == "line":
             if self._line_start is None:
                 self._line_start = draw_pos
@@ -297,6 +340,7 @@ class _SymbolScene(QGraphicsScene):
 
     def mouseMoveEvent(self, event: Any) -> None:
         pos = event.scenePos()
+        # Preview for line/rect/ellipse
         if self._line_start is not None and self._tool in ("line", "rect", "ellipse"):
             # Issue 7: preview end-point also snaps to sub-grid
             dsx, dsy = _snap_sub(pos.x(), pos.y())
@@ -322,7 +366,62 @@ class _SymbolScene(QGraphicsScene):
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addEllipse(
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
+        # Feature #3: preview for polyline
+        elif self._tool == "polyline" and self._poly_points:
+            dsx, dsy = _snap_sub(pos.x(), pos.y())
+            draw_pos = QPointF(dsx, dsy)
+            if self._temp_item:
+                self.removeItem(self._temp_item)
+            pen = QPen(QColor("#2277ee"), 1, Qt.PenStyle.DashLine)
+            last = self._poly_points[-1]
+            self._temp_item = self.addLine(
+                last.x(), last.y(), draw_pos.x(), draw_pos.y(), pen)
         super().mouseMoveEvent(event)
+
+    def mouseDoubleClickEvent(self, event: Any) -> None:
+        """Feature #3: double-click finishes the polyline."""
+        if self._tool == "polyline" and len(self._poly_points) >= 2:
+            self._finish_polyline()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _finish_polyline(self) -> None:
+        """Feature #3: commit the current polyline as a SymbolCmd."""
+        if len(self._poly_points) < 2:
+            self._cancel_draw()
+            return
+        before = self._snapshot()
+        pts = [[p.x(), p.y()] for p in self._poly_points]
+        cmd = SymbolCmd("polyline", filled=self._fill_mode, points=pts)
+        self.sym_cmds.append(cmd)
+
+        # Build a QGraphicsPathItem for the symbol editor display
+        from PyQt6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.moveTo(pts[0][0], pts[0][1])
+        for px, py in pts[1:]:
+            path.lineTo(px, py)
+        if self._fill_mode and len(pts) >= 3:
+            path.closeSubpath()
+        pen = QPen(QColor("#111111"), 2)
+        it = QGraphicsPathItem(path)
+        it.setPen(pen)
+        if self._fill_mode and len(pts) >= 3:
+            it.setBrush(QBrush(QColor("#333333")))
+        it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.addItem(it)
+        self._sym_items.append(it)
+
+        # Clean up temporary preview segments
+        for seg in self._poly_segs:
+            self.removeItem(seg)
+        self._poly_segs.clear()
+        self._poly_points.clear()
+        if self._temp_item:
+            self.removeItem(self._temp_item)
+            self._temp_item = None
+        self._push_undo("Draw Polyline", before, self._snapshot())
 
     # ------------------------------------------------------------------
     # Keyboard handling (Issues 5 & 6)
@@ -339,6 +438,11 @@ class _SymbolScene(QGraphicsScene):
             return
         if ctrl and (key == Qt.Key.Key_Y or (key == Qt.Key.Key_Z and shift)):
             self._undo_stack.redo()
+            return
+
+        # Feature #3: Escape cancels in-progress polyline
+        if key == Qt.Key.Key_Escape:
+            self._cancel_draw()
             return
 
         # Issue 5: delete selected graphics
@@ -468,6 +572,8 @@ class _SymbolScene(QGraphicsScene):
         self._sym_items.clear()
         self._line_start = None
         self._temp_item = None
+        self._poly_points.clear()
+        self._poly_segs.clear()
         self._draw_origin()
 
     def load_def(self, udef: UserCompDef) -> None:
@@ -488,6 +594,24 @@ class _SymbolScene(QGraphicsScene):
                 it = self.addEllipse(
                     QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h),
                     pen, brush)
+            elif cmd.kind == "polyline":
+                # Feature #3: render polyline
+                from PyQt6.QtGui import QPainterPath
+                pts = cmd.points
+                if len(pts) >= 2:
+                    path = QPainterPath()
+                    path.moveTo(pts[0][0], pts[0][1])
+                    for px, py in pts[1:]:
+                        path.lineTo(px, py)
+                    if cmd.filled and len(pts) >= 3:
+                        path.closeSubpath()
+                    it = QGraphicsPathItem(path)
+                    it.setPen(pen)
+                    if cmd.filled and len(pts) >= 3:
+                        it.setBrush(QBrush(QColor("#333333")))
+                    self.addItem(it)
+                else:
+                    it = self.addLine(0, 0, 0, 0, pen)
             else:
                 it = self.addLine(0, 0, 0, 0, pen)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -569,6 +693,7 @@ class _FloatingToolbar(QWidget):
     _BUTTONS: list[tuple[str, str, str, bool]] = [
         ("⬚", "Select (Esc)", "select", False),
         ("╱", "Draw Line", "line", False),
+        ("⌇", "Draw Polyline (click=add vertex, right-click or dbl-click=finish)", "polyline", False),
         ("▭", "Draw Rect", "rect", False),
         ("◯", "Draw Ellipse", "ellipse", False),
         ("⊙", "Add Pin", "pin", False),
@@ -886,6 +1011,8 @@ class UserComponentEditorDialog(QDialog):
             item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             item.setOpacity(0.85)
             self._sym_scene.addItem(item)
+            # Bug #9: show connection points (pins) in the preview
+            item.show_pins(True)
             # Centre the view on the item
             self._sym_view.centerOn(item)
         except Exception:
@@ -1097,6 +1224,18 @@ class LibraryManagerDialog(QDialog):
             lib_btns.addWidget(b)
         left.addLayout(lib_btns)
 
+        # Feature #5: Export / Import library buttons
+        io_btns = QHBoxLayout()
+        self._export_btn = QPushButton("Export…")
+        self._export_btn.setToolTip("Export the selected library to a JSON file")
+        self._export_btn.clicked.connect(self._export_library)
+        self._import_btn = QPushButton("Import…")
+        self._import_btn.setToolTip("Import a library from a JSON file")
+        self._import_btn.clicked.connect(self._import_library)
+        for b in (self._export_btn, self._import_btn):
+            io_btns.addWidget(b)
+        left.addLayout(io_btns)
+
         # ── Right: component list ─────────────────────────────────────
         right = QVBoxLayout()
         root.addLayout(right, 2)
@@ -1179,6 +1318,61 @@ class LibraryManagerDialog(QDialog):
             lm = LibraryManager()
             lm.rename_library(lib.library_id, name.strip())
             self._refresh_libs()
+
+    def _export_library(self) -> None:
+        """Feature #5: Export the current library to a JSON file."""
+        import json as _json
+        from PyQt6.QtWidgets import QFileDialog
+        lib = self._current_lib()
+        if lib is None:
+            QMessageBox.warning(self, "Export Library", "Please select a library first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Library",
+            f"{lib.name}.json",
+            "JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump(lib.to_dict(), fh, indent=2)
+            QMessageBox.information(
+                self, "Export Library",
+                f"Library '{lib.name}' exported to:\n{path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", str(exc))
+
+    def _import_library(self) -> None:
+        """Feature #5: Import a library from a JSON file."""
+        import json as _json
+        import uuid as _uuid
+        from PyQt6.QtWidgets import QFileDialog
+        from ..models.library_system import CompLibrary
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Library", "",
+            "JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = _json.load(fh)
+            lib = CompLibrary.from_dict(data)
+            lm = LibraryManager()
+            # Assign a new ID if one already exists to avoid collision
+            if lm.get_library(lib.library_id) is not None:
+                lib.library_id = str(_uuid.uuid4())
+            lm._libraries.append(lib)
+            lm._save_library(lib)
+            self._refresh_libs()
+            QMessageBox.information(
+                self, "Import Library",
+                f"Library '{lib.name}' imported successfully.",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Error", str(exc))
 
     # ── Component helpers ──────────────────────────────────────────────
 

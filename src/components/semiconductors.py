@@ -27,7 +27,7 @@ class DiodeItem(ComponentItem):
         return {"anode": QPointF(-40, 0), "cathode": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("#333333")))
         # Lead lines
         painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
@@ -61,7 +61,7 @@ class ZenerDiodeItem(ComponentItem):
         return {"anode": QPointF(-40, 0), "cathode": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("#333333")))
         painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
         painter.drawLine(QPointF(10, 0), QPointF(40, 0))
@@ -102,7 +102,7 @@ class _BJTItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Vertical base line
         painter.drawLine(QPointF(-10, -20), QPointF(-10, 20))
@@ -174,7 +174,7 @@ class _MOSFETItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Gate lead (extended to -40)
         painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))
@@ -245,7 +245,7 @@ class IGBTItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Reuse MOSFET-like body
         painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))

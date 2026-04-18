@@ -21,6 +21,7 @@ from ..components.base import ComponentItem
 from ..components.wire import WireItem
 from ..models.circuit import Circuit
 from ..panels.component_palette import ComponentPalette
+from ..panels.layers_panel import LayersPanel
 from ..panels.properties_panel import PropertiesPanel
 from ..panels.netlist_editor import NetlistEditor
 
@@ -52,9 +53,11 @@ class MainWindow(QMainWindow):
         self._properties = PropertiesPanel(self)
         self._netlist_editor = NetlistEditor(self)
         self._netlist_editor.set_scene(self._scene)
+        self._layers_panel = LayersPanel(self)  # Feature #6
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._palette)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._properties)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._layers_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._netlist_editor)
 
         # Status bar
@@ -71,6 +74,18 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._connect_signals()
 
+        # Feature #2: apply saved font settings to labels
+        self._apply_font_settings()
+
+    def _apply_font_settings(self) -> None:
+        """Feature #2: apply saved font/size settings to LabelItem."""
+        from ..app.settings import AppSettings
+        from ..components.base import LabelItem
+        from PyQt6.QtGui import QFont
+        settings = AppSettings()
+        font = QFont(settings.label_font_family(), settings.label_font_size())
+        LabelItem.set_label_font(font)
+
     # ------------------------------------------------------------------
     # Menu bar
     # ------------------------------------------------------------------
@@ -78,14 +93,18 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         mb = self.menuBar()
 
+        # Feature #4: load user shortcuts from settings
+        from ..app.settings import AppSettings
+        _sc = AppSettings().shortcut  # shorthand
+
         # File
         file_menu = mb.addMenu("&File")
-        self._act_new = self._action("&New", "Ctrl+N", self._new)
-        self._act_open = self._action("&Open…", "Ctrl+O", self._open)
-        self._act_save = self._action("&Save", "Ctrl+S", self._save)
-        self._act_save_as = self._action("Save &As…", "Ctrl+Shift+S", self._save_as)
+        self._act_new = self._action("&New", _sc("file.new"), self._new)
+        self._act_open = self._action("&Open…", _sc("file.open"), self._open)
+        self._act_save = self._action("&Save", _sc("file.save"), self._save)
+        self._act_save_as = self._action("Save &As…", _sc("file.save_as"), self._save_as)
         self._act_import = self._action("Import &Netlist…", callback=self._import_netlist)
-        self._act_exit = self._action("E&xit", "Alt+F4", self.close)
+        self._act_exit = self._action("E&xit", _sc("file.exit"), self.close)
 
         export_menu = file_menu.addMenu("&Export")
         self._action("Export as &PNG…",
@@ -115,11 +134,11 @@ class MainWindow(QMainWindow):
         # Edit
         edit_menu = mb.addMenu("&Edit")
         self._act_undo = self._undo_stack.createUndoAction(self, "&Undo")
-        self._act_undo.setShortcut("Ctrl+Z")
+        self._act_undo.setShortcut(_sc("edit.undo"))
         self._act_redo = self._undo_stack.createRedoAction(self, "&Redo")
-        self._act_redo.setShortcut("Ctrl+Y")
-        self._act_select_all = self._action("Select &All", "Ctrl+A", self._select_all)
-        self._act_delete = self._action("&Delete Selected", "Del", self._delete_selected)
+        self._act_redo.setShortcut(_sc("edit.redo"))
+        self._act_select_all = self._action("Select &All", _sc("edit.select_all"), self._select_all)
+        self._act_delete = self._action("&Delete Selected", _sc("edit.delete"), self._delete_selected)
         for act in (self._act_undo, self._act_redo, None,
                     self._act_select_all, self._act_delete):
             if act is None:
@@ -129,20 +148,21 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("&View")
-        self._act_zoom_in = self._action("Zoom &In", "Ctrl++", self._view.zoom_in)
-        self._act_zoom_out = self._action("Zoom &Out", "Ctrl+-", self._view.zoom_out)
-        self._act_fit = self._action("&Fit All", "Ctrl+0", self._view.fit_all)
+        self._act_zoom_in = self._action("Zoom &In", _sc("view.zoom_in"), self._view.zoom_in)
+        self._act_zoom_out = self._action("Zoom &Out", _sc("view.zoom_out"), self._view.zoom_out)
+        self._act_fit = self._action("&Fit All", _sc("view.fit_all"), self._view.fit_all)
         for act in (self._act_zoom_in, self._act_zoom_out, self._act_fit):
             view_menu.addAction(act)
         view_menu.addSeparator()
         view_menu.addAction(self._palette.toggleViewAction())
         view_menu.addAction(self._properties.toggleViewAction())
         view_menu.addAction(self._netlist_editor.toggleViewAction())
+        view_menu.addAction(self._layers_panel.toggleViewAction())
 
         # Tools
         tools_menu = mb.addMenu("&Tools")
         self._act_select_mode = self._action(
-            "&Select", "Escape",
+            "&Select", _sc("tools.select"),
             lambda: self._scene.set_mode(SceneMode.SELECT),
             checkable=True, checked=True,
         )
@@ -162,6 +182,13 @@ class MainWindow(QMainWindow):
         lib_menu.addAction(self._action(
             "Manage User Components…",
             callback=self._manage_user_library,
+        ))
+
+        # Settings
+        settings_menu = mb.addMenu("&Settings")
+        settings_menu.addAction(self._action(
+            "Preferences…",
+            callback=self._open_settings,
         ))
 
         # Help
@@ -232,6 +259,13 @@ class MainWindow(QMainWindow):
         self._scene.selection_changed_signal.connect(self._on_selection_changed)
         self._scene.mode_changed.connect(self._on_mode_changed)
         self._view.zoom_changed.connect(self._on_zoom_changed)
+        # Feature #6: layer panel
+        self._layers_panel.component_layer_toggled.connect(
+            self._scene.set_component_layer_visible)
+        self._layers_panel.annotation_layer_toggled.connect(
+            self._scene.set_annotation_layer_visible)
+        self._layers_panel.annotation_tool_selected.connect(
+            self._on_annotation_tool_selected)
 
     # ------------------------------------------------------------------
     # Slots
@@ -264,6 +298,14 @@ class MainWindow(QMainWindow):
         self._act_select_mode.setChecked(mode_name == "SELECT")
         # Issue 9: only allow rubber-band selection in SELECT mode
         self._view.set_select_mode(mode_name == "SELECT")
+
+    def _on_annotation_tool_selected(self, tool: str) -> None:
+        """Feature #6: switch scene to the selected annotation drawing tool."""
+        self._scene.set_annotation_tool(tool)
+        if tool == "select":
+            self._status_mode.setText("Mode: SELECT")
+        else:
+            self._status_mode.setText(f"Mode: ANNOTATE ({tool})")
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self._status_zoom.setText(f"Zoom: {zoom * 100:.0f}%")
@@ -441,6 +483,15 @@ class MainWindow(QMainWindow):
         # Reset singleton and refresh palette after any changes
         LibraryManager.reset_instance()
         self._palette._populate(self._palette._search.text())
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    def _open_settings(self) -> None:
+        from ..dialogs.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # About

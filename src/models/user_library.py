@@ -23,7 +23,7 @@ class PinDef:
 @dataclass
 class SymbolCmd:
     """One drawing command for the symbol."""
-    kind: str           # "line" | "rect" | "ellipse" | "text"
+    kind: str           # "line" | "rect" | "ellipse" | "text" | "polyline"
     # Common fields (not all required for every kind)
     x1: float = 0.0
     y1: float = 0.0
@@ -32,7 +32,9 @@ class SymbolCmd:
     w: float = 0.0
     h: float = 0.0
     text: str = ""
-    filled: bool = False  # Issue 6: solid fill for rect/ellipse
+    filled: bool = False  # Issue 6: solid fill for rect/ellipse/polyline
+    # Polyline: list of [x, y] pairs (used when kind == "polyline")
+    points: list = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +96,7 @@ class UserCompDef:
                     h=s.get("h", 0.0),
                     text=s.get("text", ""),
                     filled=s.get("filled", False),
+                    points=s.get("points", []),
                 ))
             except Exception:
                 pass

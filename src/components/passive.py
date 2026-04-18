@@ -27,7 +27,7 @@ class ResistorItem(ComponentItem):
         return {"p": QPointF(-40, 0), "n": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("white")))
         path = QPainterPath()
         path.moveTo(-40, 0)
@@ -57,7 +57,7 @@ class CapacitorItem(ComponentItem):
         return {"+": QPointF(0, -20), "-": QPointF(0, 20)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("white")))
         painter.drawLine(QPointF(0, -20), QPointF(0, -5))
         painter.drawLine(QPointF(-13, -5), QPointF(13, -5))
@@ -86,7 +86,7 @@ class InductorItem(ComponentItem):
         return {"p": QPointF(-40, 0), "n": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("white")))
         painter.drawLine(QPointF(-40, 0), QPointF(-18, 0))
         painter.drawLine(QPointF(18, 0), QPointF(40, 0))
@@ -119,7 +119,7 @@ class TransformerItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
 
         def _coil(cx: float, direction: int) -> QPainterPath:
             path = QPainterPath()

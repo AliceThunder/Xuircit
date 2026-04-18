@@ -28,6 +28,9 @@ GRID = 20  # px
 # Minimum Manhattan-length (in scene coords) before a click becomes a drag.
 _DRAG_THRESHOLD = 4
 
+# Default component drawing color
+_DEFAULT_COMPONENT_COLOR = "#111111"
+
 
 def snap(v: float) -> float:
     return round(v / GRID) * GRID
@@ -69,19 +72,30 @@ class LabelItem(QGraphicsSimpleTextItem):
     Issue 8: Class-level flag ``_dragging_enabled`` controls whether labels
     can be dragged independently.  Use ``LabelItem.set_dragging_enabled()``
     to toggle from the main window.
+
+    Bug #1: The selection dotted border is suppressed; instead the label text
+    turns blue when selected.  A class-level ``_label_font`` allows the font
+    to be changed application-wide (Feature #2).
     """
 
     # Issue 8: globally enable/disable label dragging
     _dragging_enabled: bool = True
 
+    # Feature #2: class-level default font for all labels
+    _label_font: QFont = QFont("monospace", 8)
+
     @classmethod
     def set_dragging_enabled(cls, enabled: bool) -> None:
         cls._dragging_enabled = enabled
 
+    @classmethod
+    def set_label_font(cls, font: QFont) -> None:
+        """Change the default font for all subsequently created labels."""
+        cls._label_font = font
+
     def __init__(self, text: str, parent: "ComponentItem") -> None:
         super().__init__(text, parent)
-        font = QFont("monospace", 8)
-        self.setFont(font)
+        self.setFont(self._label_font)
         self.setBrush(QBrush(QColor("#333333")))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -164,7 +178,26 @@ class LabelItem(QGraphicsSimpleTextItem):
             ax = -ax - w
         # Vertically centre the text around the item's origin.
         painter.translate(ax, -h / 2)
-        QGraphicsSimpleTextItem.paint(self, painter, option, widget)
+
+        # Bug #1: suppress the Qt selection dotted border entirely.
+        # Instead, render the text in blue when the label is selected.
+        # We strip the State_Selected flag from the option so the parent's
+        # paint() does not draw the selection indicator.
+        try:
+            from PyQt6.QtWidgets import QStyle
+            option.state = option.state & ~QStyle.StateFlag.State_Selected
+        except Exception:
+            pass
+
+        # Change text brush to blue when selected
+        if self.isSelected():
+            orig_brush = self.brush()
+            self.setBrush(QBrush(QColor("#2277ee")))
+            QGraphicsSimpleTextItem.paint(self, painter, option, widget)
+            self.setBrush(orig_brush)
+        else:
+            QGraphicsSimpleTextItem.paint(self, painter, option, widget)
+
         painter.restore()
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
@@ -230,6 +263,9 @@ class ComponentItem(QGraphicsItem):
         self.params: dict[str, Any] = params or {}
         self.component_id: str = comp_id or str(uuid.uuid4())
         self.library_id: str | None = library_id
+
+        # Feature #7: per-instance drawing color
+        self._color: str = _DEFAULT_COMPONENT_COLOR
 
         # Issue 14: per-instance label visibility flags
         self._ref_visible: bool = True
@@ -453,6 +489,7 @@ class ComponentItem(QGraphicsItem):
         menu.addAction("Flip Vertical  (V)").triggered.connect(
             lambda: self._context_action(self._flip_v, "Flip Vertical"))
         menu.addSeparator()
+        menu.addAction("Set Color…").triggered.connect(self._set_color)
         menu.addAction("Properties…").triggered.connect(self._open_props)
         menu.addSeparator()
         menu.addAction("Delete").triggered.connect(self._delete_self)
@@ -501,6 +538,16 @@ class ComponentItem(QGraphicsItem):
         scene = self.scene()
         if scene is not None and hasattr(scene, "_rebuild_auto_wires"):
             scene._rebuild_auto_wires()  # type: ignore[union-attr]
+
+    def _set_color(self) -> None:
+        """Feature #7: open a color dialog to change the component drawing color."""
+        from PyQt6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(
+            QColor(self._color), None, "Set Component Color"
+        )
+        if color.isValid():
+            self._color = color.name()
+            self.update()
 
     def _delete_self(self) -> None:
         scene = self.scene()
@@ -555,6 +602,7 @@ class ComponentItem(QGraphicsItem):
                                self._val_label.pos().y()],
             "ref_visible": self._ref_visible,
             "val_visible": self._val_visible,
+            "color": self._color,
         }
         if self.library_id is not None:
             d["library_id"] = self.library_id
@@ -594,8 +642,8 @@ def _open_properties(item: "ComponentItem") -> None:
 # Shared pen helper
 # ------------------------------------------------------------------
 
-def _std_pen() -> QPen:
-    pen = QPen(QColor("#111111"), 2.0)
+def _std_pen(color: str | None = None) -> QPen:
+    pen = QPen(QColor(color or _DEFAULT_COMPONENT_COLOR), 2.0)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     return pen
