@@ -48,7 +48,7 @@ class GroundItem(ComponentItem):
         return {"p": QPointF(0, -20)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Lead down (extended to -20)
         painter.drawLine(QPointF(0, -20), QPointF(0, 0))

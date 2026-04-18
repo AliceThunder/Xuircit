@@ -27,7 +27,7 @@ class IdealSwitchItem(ComponentItem):
         return {"p": QPointF(-40, 0), "n": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Left lead + contact dot
         painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))
@@ -61,7 +61,7 @@ class SCRItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("#333")))
         # Diode triangle
         painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
@@ -100,7 +100,7 @@ class TRIACItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("#333")))
         painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))
         painter.drawLine(QPointF(12, 0), QPointF(40, 0))

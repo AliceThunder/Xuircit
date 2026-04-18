@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QDockWidget,
     QFormLayout,
     QGroupBox,
@@ -80,6 +82,16 @@ class PropertiesPanel(QDockWidget):
         basic_form.addRow("Value:", self._val_edit)
         layout.addWidget(basic_box)
 
+        # ── Appearance (Feature #7: component color) ──────────────────
+        self._appearance_box = QGroupBox("Appearance")
+        appearance_form = QFormLayout(self._appearance_box)
+        self._color_btn = QPushButton()
+        self._color_btn.setFixedWidth(60)
+        self._color_btn.setToolTip("Click to change component color")
+        self._color_btn.clicked.connect(self._pick_color)
+        appearance_form.addRow("Color:", self._color_btn)
+        layout.addWidget(self._appearance_box)
+
         # ── Label visibility (Issue 14) ────────────────────────────
         self._vis_group = QGroupBox("Label Visibility")
         self._vis_layout = QFormLayout(self._vis_group)
@@ -109,6 +121,12 @@ class PropertiesPanel(QDockWidget):
         self._current_item = item
         self._ref_edit.setText(item.ref)
         self._val_edit.setText(item.value)
+
+        # Feature #7: update color button
+        comp_color = getattr(item, "_color", "#111111")
+        self._color_btn.setStyleSheet(
+            f"background-color: {comp_color}; border: 1px solid #888;"
+        )
 
         # Issue 14: visibility checkboxes for ref/val
         self._ref_vis_cb.setChecked(getattr(item, "_ref_visible", True))
@@ -146,6 +164,21 @@ class PropertiesPanel(QDockWidget):
 
         self._placeholder.setVisible(False)
         self._form_widget.setVisible(True)
+
+    def _pick_color(self) -> None:
+        """Feature #7: open color dialog and apply to component."""
+        from ..components.base import ComponentItem
+        if not isinstance(self._current_item, ComponentItem):
+            return
+        item = self._current_item
+        current = QColor(getattr(item, "_color", "#111111"))
+        color = QColorDialog.getColor(current, self, "Set Component Color")
+        if color.isValid():
+            item._color = color.name()
+            item.update()
+            self._color_btn.setStyleSheet(
+                f"background-color: {color.name()}; border: 1px solid #888;"
+            )
 
     def clear(self) -> None:
         self._current_item = None

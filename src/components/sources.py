@@ -27,7 +27,7 @@ class VoltageSourceItem(ComponentItem):
         return {"+": QPointF(0, -20), "-": QPointF(0, 20)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("white")))
         painter.drawEllipse(QPointF(0, 0), 16, 16)
         painter.drawLine(QPointF(0, -20), QPointF(0, -16))
@@ -55,7 +55,7 @@ class CurrentSourceItem(ComponentItem):
         return {"+": QPointF(0, -20), "-": QPointF(0, 20)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("white")))
         painter.drawEllipse(QPointF(0, 0), 16, 16)
         painter.drawLine(QPointF(0, -20), QPointF(0, -16))
@@ -67,11 +67,12 @@ class CurrentSourceItem(ComponentItem):
         arrow.moveTo(-4, -4)
         arrow.lineTo(0, -10)
         arrow.lineTo(4, -4)
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.drawPath(arrow)
 
 
-def _diamond_source(painter: QPainter, w: float = 28, h: float = 20) -> None:
+def _diamond_source(painter: QPainter, w: float = 28, h: float = 20,
+                    color: str | None = None) -> None:
     """Draw a diamond (rhombus) shape for dependent sources."""
     path = QPainterPath()
     path.moveTo(0, -h)
@@ -79,7 +80,7 @@ def _diamond_source(painter: QPainter, w: float = 28, h: float = 20) -> None:
     path.lineTo(0, h)
     path.lineTo(-w, 0)
     path.closeSubpath()
-    painter.setPen(_std_pen())
+    painter.setPen(_std_pen(color))
     painter.setBrush(QBrush(QColor("white")))
     painter.drawPath(path)
 
@@ -105,7 +106,7 @@ class VCVSItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        _diamond_source(painter, 26, 26)
+        _diamond_source(painter, 26, 26, self._color)
         painter.drawLine(QPointF(0, -40), QPointF(0, -26))
         painter.drawLine(QPointF(0, 26), QPointF(0, 40))
         painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
@@ -138,7 +139,7 @@ class CCCSItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        _diamond_source(painter, 26, 26)
+        _diamond_source(painter, 26, 26, self._color)
         painter.drawLine(QPointF(0, -40), QPointF(0, -26))
         painter.drawLine(QPointF(0, 26), QPointF(0, 40))
         painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
@@ -170,7 +171,7 @@ class VCCSItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        _diamond_source(painter, 26, 26)
+        _diamond_source(painter, 26, 26, self._color)
         painter.drawLine(QPointF(0, -40), QPointF(0, -26))
         painter.drawLine(QPointF(0, 26), QPointF(0, 40))
         painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
@@ -202,7 +203,7 @@ class CCVSItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        _diamond_source(painter, 26, 26)
+        _diamond_source(painter, 26, 26, self._color)
         painter.drawLine(QPointF(0, -40), QPointF(0, -26))
         painter.drawLine(QPointF(0, 26), QPointF(0, 40))
         painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))

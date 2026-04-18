@@ -148,7 +148,7 @@ class WireElbowItem(ComponentItem):
         return {"a": QPointF(0, -20), "b": QPointF(20, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         painter.setBrush(QBrush(QColor("#e0f0ff")))
         # L-shaped corner mark
         painter.drawLine(QPointF(0, -20), QPointF(0, 0))
@@ -179,7 +179,7 @@ class WireTeeItem(ComponentItem):
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
-        painter.setPen(_std_pen())
+        painter.setPen(_std_pen(self._color))
         # T-shaped lines
         painter.drawLine(QPointF(-20, 0), QPointF(20, 0))
         painter.drawLine(QPointF(0, 0), QPointF(0, 20))
