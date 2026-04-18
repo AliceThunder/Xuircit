@@ -172,10 +172,10 @@ class LabelItem(QGraphicsSimpleTextItem):
         # Counter-rotate so the text is always upright.
         painter.rotate(-angle_deg)
         if has_reflection:
-            # Counter the reflection; also swap the horizontal alignment
-            # because the x-axis direction is now reversed.
+            # Counter the reflection. After the counter-rotate + counter-scale
+            # the painter is back in normal screen space, so ax (computed from
+            # the scene position) is already correct — no swap needed.
             painter.scale(-1.0, 1.0)
-            ax = -ax - w
         # Vertically centre the text around the item's origin.
         painter.translate(ax, -h / 2)
 
