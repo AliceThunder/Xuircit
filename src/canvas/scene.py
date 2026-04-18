@@ -41,10 +41,46 @@ def _migrate_label_pos(pos: list[float], rotation: float) -> list[float]:
     return [x, y]
 
 
-class SceneMode(Enum):
-    SELECT = auto()
-    PLACE_COMPONENT = auto()
-    DRAW_WIRE = auto()
+def _fix_node_value_split(
+    comp: dict[str, Any],
+    type_name: str,
+    lib_id: str | None,
+    lm: Any,
+) -> dict[str, Any]:
+    """Correct the node/value split in a parsed SPICE component dict.
+
+    The SPICE parser heuristically treats the last non-parameter token as
+    the component value.  For multi-pin components with an empty value this
+    misidentifies the last node as the value.
+
+    When the library entry is found, we compute the expected pin count and
+    redistribute the tokens accordingly.
+    """
+    try:
+        result = lm.find_entry(type_name, lib_id)
+        if result is None:
+            return comp
+        entry, _ = result
+        pin_count = len(entry.pin_names) if entry.is_builtin else len(entry.pins)
+        if pin_count == 0:
+            return comp
+        nodes: list[str] = list(comp.get("nodes", []))
+        value: str = comp.get("value", "")
+        all_tokens = nodes + ([value] if value else [])
+        if len(all_tokens) <= pin_count:
+            comp = dict(comp)
+            comp["nodes"] = all_tokens
+            comp["value"] = ""
+        elif len(all_tokens) > pin_count:
+            comp = dict(comp)
+            comp["nodes"] = all_tokens[:pin_count]
+            comp["value"] = " ".join(str(t) for t in all_tokens[pin_count:])
+    except Exception:
+        pass
+    return comp
+
+
+
 
 
 # Populated lazily on first access
@@ -186,6 +222,8 @@ class CircuitScene(QGraphicsScene):
     wire_drawn = pyqtSignal(dict)
     selection_changed_signal = pyqtSignal(list)
     mode_changed = pyqtSignal(str)
+    # Fix 9: emitted when ESC resets the annotation tool to "select"
+    annotation_tool_reset = pyqtSignal()
 
     def __init__(self, circuit: Circuit, parent: Any = None) -> None:
         super().__init__(parent)
@@ -520,6 +558,11 @@ class CircuitScene(QGraphicsScene):
         from PyQt6.QtGui import QPen, QColor as QC
         tool = self._annotation_tool
 
+        if tool == "text":
+            # Fix 10: Open text-input dialog and place a text annotation
+            self._anno_place_text(pos)
+            return
+
         if tool == "polyline":
             self._anno_poly_pts.append(pos)
             if len(self._anno_poly_pts) >= 2:
@@ -540,6 +583,30 @@ class CircuitScene(QGraphicsScene):
                 if self._anno_temp is not None:
                     self.removeItem(self._anno_temp)
                     self._anno_temp = None
+
+    def _anno_place_text(self, pos: QPointF) -> None:
+        """Fix 10: Open text annotation dialog and place result at pos."""
+        from ..canvas.annotation import TextAnnotationItem, _TextAnnotationDialog
+        dlg = _TextAnnotationDialog(color=self._anno_color)
+        if dlg.exec():
+            text = dlg.text()
+            if text:
+                before = self._take_snapshot()
+                item = TextAnnotationItem(
+                    text=text,
+                    x=pos.x(), y=pos.y(),
+                    color=self._anno_color,
+                    font_family=dlg.font_family(),
+                    font_size=dlg.font_size(),
+                    bold=dlg.bold(),
+                    italic=dlg.italic(),
+                )
+                if not self._annotation_layer_visible:
+                    item.setVisible(False)
+                self.addItem(item)
+                self.circuit.add_annotation(item.to_dict())
+                after = self._take_snapshot()
+                self._push_undo("Add Text Annotation", before, after)
 
     def _anno_move(self, pos: QPointF) -> None:
         """Update annotation preview during mouse move."""
@@ -585,6 +652,8 @@ class CircuitScene(QGraphicsScene):
         from ..canvas.annotation import AnnotationItem
         tool = self._annotation_tool
         pts = [[start.x(), start.y()], [end.x(), end.y()]]
+        # Fix 6: capture before-state for undo
+        before = self._take_snapshot()
         item = AnnotationItem(
             kind=tool,
             points=pts,
@@ -597,6 +666,9 @@ class CircuitScene(QGraphicsScene):
         self.addItem(item)
         # Persist in circuit
         self.circuit.add_annotation(item.to_dict())
+        # Fix 6: push undo
+        after = self._take_snapshot()
+        self._push_undo("Add Annotation", before, after)
 
     def _anno_finish_polyline(self) -> None:
         """Commit the current annotation polyline."""
@@ -604,6 +676,8 @@ class CircuitScene(QGraphicsScene):
         if len(self._anno_poly_pts) < 2:
             self._anno_cancel()
             return
+        # Fix 6: capture before-state for undo
+        before = self._take_snapshot()
         pts = [[p.x(), p.y()] for p in self._anno_poly_pts]
         item = AnnotationItem(
             kind="polyline",
@@ -617,6 +691,9 @@ class CircuitScene(QGraphicsScene):
         self.addItem(item)
         self.circuit.add_annotation(item.to_dict())
         self._anno_cancel()
+        # Fix 6: push undo
+        after = self._take_snapshot()
+        self._push_undo("Add Annotation", before, after)
 
     def _pin_at(self, pos: QPointF) -> tuple[str, str] | None:
         """Return (comp_id, pin_name) if a pin is near pos."""
@@ -923,11 +1000,21 @@ class CircuitScene(QGraphicsScene):
         idx: dict[str, dict] = {
             c["id"]: c for c in self.circuit.components if "id" in c
         }
-        from ..canvas.annotation import AnnotationItem
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
         anno_idx: dict[str, dict] = {
             a["id"]: a for a in self.circuit.annotations if "id" in a
         }
         for item in self.items():
+            # Fix 10: sync TextAnnotationItem positions
+            if isinstance(item, TextAnnotationItem):
+                aid = item.anno_id
+                if aid in anno_idx:
+                    dp = item.pos()
+                    # TextAnnotationItem position is in scene coords via setPos
+                    anno_idx[aid]["x"] = dp.x()
+                    anno_idx[aid]["y"] = dp.y()
+                    anno_idx[aid]["points"] = [[dp.x(), dp.y()]]
+                continue
             # Feature #6: sync moved annotation positions
             if isinstance(item, AnnotationItem):
                 aid = item.anno_id
@@ -1091,11 +1178,15 @@ class CircuitScene(QGraphicsScene):
         """Parse an XCIT extended netlist and reconstruct scene with stored positions."""
         from ..io.xcit_netlist import parse_xcit_netlist
         from ..io.netlist_parser import layout_components
+        from ..models.library_system import LibraryManager
 
-        components, positions, virtual_comps, label_format = parse_xcit_netlist(xcit_text)
+        components, positions, virtual_comps, label_format, annotations = \
+            parse_xcit_netlist(xcit_text)
         self.circuit.clear()
         # Store format so rebuild_from_circuit uses the right label migration
         self.circuit.label_format = label_format
+
+        lm = LibraryManager()
 
         # Assign positions from layout section; fall back to auto-layout
         auto_positions = layout_components(components)
@@ -1120,10 +1211,17 @@ class CircuitScene(QGraphicsScene):
             # (which can only guess type from the reference prefix letter).
             resolved_type = (pos_data.get("type_name") if pos_data else None) \
                 or comp.get("type", "R")
+            lib_id = pos_data.get("library_id") if pos_data else None
+
+            # Fix 1: Correct node/value split using known pin count from library.
+            # The SPICE parser always takes the last token as the value, but for
+            # multi-pin components with no value this misidentifies the last node.
+            comp = _fix_node_value_split(comp, resolved_type, lib_id, lm)
+
             comp_dict: dict[str, Any] = {
                 "id": comp_id,
                 "type": resolved_type,
-                "library_id": pos_data.get("library_id") if pos_data else None,
+                "library_id": lib_id,
                 "ref": ref,
                 "value": comp.get("value", ""),
                 "params": comp.get("params", {}),
@@ -1157,6 +1255,10 @@ class CircuitScene(QGraphicsScene):
             }
             self.circuit.add_component(comp_dict)
 
+        # Fix 11: Restore annotations from XCIT annotation section
+        for anno in annotations:
+            self.circuit.add_annotation(anno)
+
         # Wires are auto-generated on rebuild
         self.rebuild_from_circuit()
 
@@ -1184,6 +1286,7 @@ class CircuitScene(QGraphicsScene):
 
         changed = False
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            from ..canvas.annotation import AnnotationItem, TextAnnotationItem
             selected_comps = [
                 it for it in self.selectedItems()
                 if isinstance(it, ComponentItem)
@@ -1192,7 +1295,11 @@ class CircuitScene(QGraphicsScene):
                 it for it in self.selectedItems()
                 if isinstance(it, WireItem)
             ]
-            if selected_comps or selected_wires:
+            selected_annos = [
+                it for it in self.selectedItems()
+                if isinstance(it, (AnnotationItem, TextAnnotationItem))
+            ]
+            if selected_comps or selected_wires or selected_annos:
                 before = self._take_snapshot()
                 for item in selected_comps:
                     self.circuit.remove_component(item.component_id)
@@ -1200,6 +1307,9 @@ class CircuitScene(QGraphicsScene):
                     changed = True
                 for item in selected_wires:
                     self.circuit.remove_wire(item.wire_id)
+                    self.removeItem(item)
+                for item in selected_annos:
+                    self.circuit.remove_annotation(item.anno_id)
                     self.removeItem(item)
                 if changed:
                     self._rebuild_auto_wires()
@@ -1291,6 +1401,11 @@ class CircuitScene(QGraphicsScene):
                 self._push_undo("Flip Vertical", before, after)
         elif key == Qt.Key.Key_Escape:
             self._cancel_wire()
+            self._anno_cancel()
+            # Fix 9: also reset annotation tool to "select" and notify UI
+            if self._annotation_tool != "select":
+                self._annotation_tool = "select"
+                self.annotation_tool_reset.emit()
             self.set_mode(SceneMode.SELECT)
         else:
             super().keyPressEvent(event)

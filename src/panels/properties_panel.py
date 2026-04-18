@@ -191,6 +191,13 @@ class PropertiesPanel(QDockWidget):
             return
         item = self._current_item
 
+        # Fix 6: capture before-state for undo
+        scene = item.scene() if callable(getattr(item, "scene", None)) else None
+        before = None
+        if scene is not None and hasattr(scene, "_take_snapshot") and \
+                hasattr(scene, "undo_stack") and scene.undo_stack is not None:
+            before = scene._take_snapshot()
+
         item.ref = self._ref_edit.text().strip()
         item.value = self._val_edit.text().strip()
 
@@ -215,4 +222,10 @@ class PropertiesPanel(QDockWidget):
         # Issue 11: refresh label display immediately
         item._refresh_labels()
         item.update()
+
+        # Fix 6: push undo after applying
+        if before is not None and scene is not None and \
+                hasattr(scene, "_push_undo") and hasattr(scene, "_take_snapshot"):
+            after = scene._take_snapshot()
+            scene._push_undo("Edit Properties", before, after)
 

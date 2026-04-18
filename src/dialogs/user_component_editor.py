@@ -10,9 +10,11 @@ from PyQt6.QtGui import (
     QUndoStack,
 )
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGraphicsEllipseItem,
@@ -883,7 +885,48 @@ class UserComponentEditorDialog(QDialog):
         self._value_edit = QLineEdit()
         form.addRow("Default value:", self._value_edit)
 
+        # Fix 3: virtual component type
+        self._virtual_cb = QCheckBox(
+            "Virtual component (wiring helper, no SPICE element)")
+        self._virtual_cb.setToolTip(
+            "Check to make this a virtual (non-SPICE) component,\n"
+            "e.g. wire bends, T-junctions you draw yourself."
+        )
+        form.addRow("", self._virtual_cb)
+
         right.addWidget(form_box)
+
+        # Fix 8: Label position defaults
+        label_pos_box = QGroupBox("Default Label Positions (dx, dy from component origin)")
+        label_pos_form = QFormLayout(label_pos_box)
+
+        def _make_dspin(val: float) -> QDoubleSpinBox:
+            s = QDoubleSpinBox()
+            s.setRange(-500.0, 500.0)
+            s.setSingleStep(1.0)
+            s.setDecimals(1)
+            s.setValue(val)
+            return s
+
+        ref_row = QHBoxLayout()
+        self._ref_dx_spin = _make_dspin(0.0)
+        self._ref_dy_spin = _make_dspin(-22.0)
+        ref_row.addWidget(QLabel("dx:"))
+        ref_row.addWidget(self._ref_dx_spin)
+        ref_row.addWidget(QLabel("dy:"))
+        ref_row.addWidget(self._ref_dy_spin)
+        label_pos_form.addRow("Ref label:", ref_row)
+
+        val_row = QHBoxLayout()
+        self._val_dx_spin = _make_dspin(0.0)
+        self._val_dy_spin = _make_dspin(14.0)
+        val_row.addWidget(QLabel("dx:"))
+        val_row.addWidget(self._val_dx_spin)
+        val_row.addWidget(QLabel("dy:"))
+        val_row.addWidget(self._val_dy_spin)
+        label_pos_form.addRow("Val label:", val_row)
+
+        right.addWidget(label_pos_box)
 
         # Pin list (from scene)
         pin_box = QGroupBox("Pin names (edit name in list, position on canvas)")
@@ -944,6 +987,15 @@ class UserComponentEditorDialog(QDialog):
             self._desc_edit.setText(existing.description)
             self._prefix_edit.setText(existing.ref_prefix)
             self._value_edit.setText(existing.default_value)
+            # Fix 3: virtual flag
+            self._virtual_cb.setChecked(getattr(existing, "is_virtual", False))
+            # Fix 8: label position defaults
+            ref_off = getattr(existing, "ref_label_offset", [0.0, -22.0])
+            val_off = getattr(existing, "val_label_offset", [0.0, 14.0])
+            self._ref_dx_spin.setValue(ref_off[0] if ref_off else 0.0)
+            self._ref_dy_spin.setValue(ref_off[1] if len(ref_off) > 1 else -22.0)
+            self._val_dx_spin.setValue(val_off[0] if val_off else 0.0)
+            self._val_dy_spin.setValue(val_off[1] if len(val_off) > 1 else 14.0)
             if not existing.is_builtin:
                 # Load custom symbol only for user-defined entries
                 _sym_udef = UserCompDef(
@@ -1112,6 +1164,15 @@ class UserComponentEditorDialog(QDialog):
             symbol=[s.__dict__ for s in self._sym_scene.sym_cmds] if not is_builtin else [],
             is_builtin=is_builtin,
             labels=labels_data,
+            # Fix 3: virtual flag
+            is_virtual=self._virtual_cb.isChecked(),
+            # Fix 8: label position defaults
+            ref_label_offset=[
+                self._ref_dx_spin.value(), self._ref_dy_spin.value()
+            ],
+            val_label_offset=[
+                self._val_dx_spin.value(), self._val_dy_spin.value()
+            ],
         )
 
         lm = LibraryManager()
@@ -1266,10 +1327,10 @@ class LibraryManagerDialog(QDialog):
     def _refresh_libs(self) -> None:
         self._lib_list.clear()
         lm = LibraryManager()
-        self._libs = lm.all_libraries()
+        # Fix 2: Only show user libraries (not the preset library which is read-only)
+        self._libs = [lib for lib in lm.all_libraries() if not lib.is_preset]
         for lib in self._libs:
-            tag = " [Preset]" if lib.is_preset else ""
-            self._lib_list.addItem(f"{lib.name}{tag}")
+            self._lib_list.addItem(lib.name)
         if self._libs:
             self._lib_list.setCurrentRow(0)
             self._refresh_comps(0)
