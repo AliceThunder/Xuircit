@@ -50,11 +50,38 @@ class LabelDef:
                    (smaller = closer to the component body edge).
     default_value: Default display value shown next to the component when no
                    instance-specific value is set.  (Issue 12)
+    dx, dy       : Explicit position offset from component origin for the
+                   horizontal (default) perspective. (Feature 6)
+    dx_v, dy_v   : Position offset for the vertical (rotated 90°) perspective.
+                   (Feature 8) — if [0,0] the horizontal values are used.
+    font_family  : Font family for this label; empty = use the application default.
+    font_size    : Font size; 0 = use the application default.
+    bold         : Bold text flag. (Feature 7)
+    italic       : Italic text flag. (Feature 7)
+    color        : Hex color string; empty = use the component body color.
+    alignment    : Text alignment: "left", "center", or "right". (Feature 7)
+    use_offset   : When True the dx/dy (or dx_v/dy_v) offset is used instead
+                   of the automatic side-based layout. (Feature 6)
     """
     text: str
     side: str = "top"   # "left" | "right" | "top" | "bottom"
     order: int = 0
     default_value: str = ""  # Issue 12: default value displayed next to component
+    # Feature 6: explicit position offset (horizontal perspective)
+    dx: float = 0.0
+    dy: float = 0.0
+    # Feature 8: explicit position offset (vertical / rotated perspective)
+    dx_v: float = 0.0
+    dy_v: float = 0.0
+    # Feature 7: per-label style
+    font_family: str = ""   # empty = application default
+    font_size: int = 0      # 0 = application default
+    bold: bool = False
+    italic: bool = False
+    color: str = ""         # empty = component body color
+    alignment: str = "left"  # "left" | "center" | "right"
+    # Feature 6: whether to use the explicit dx/dy instead of auto-side layout
+    use_offset: bool = False
 
 
 @dataclass
@@ -71,6 +98,13 @@ class UserCompDef:
     # None means use the built-in default.
     ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
     val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
+    # Feature 8: vertical (rotated) perspective offsets
+    ref_label_offset_v: list[float] = field(default_factory=list)
+    val_label_offset_v: list[float] = field(default_factory=list)
+    # Feature 7: per-label style for ref and val labels
+    # Each style dict may contain: font_family, font_size, bold, italic, color, alignment
+    ref_label_style: dict = field(default_factory=dict)
+    val_label_style: dict = field(default_factory=dict)
     # Extra named labels beyond ref/value (order within a side is preserved).
     labels: list[LabelDef] = field(default_factory=list)
 
@@ -109,6 +143,17 @@ class UserCompDef:
                     side=lb.get("side", "top"),
                     order=lb.get("order", 0),
                     default_value=lb.get("default_value", ""),
+                    dx=lb.get("dx", 0.0),
+                    dy=lb.get("dy", 0.0),
+                    dx_v=lb.get("dx_v", 0.0),
+                    dy_v=lb.get("dy_v", 0.0),
+                    font_family=lb.get("font_family", ""),
+                    font_size=lb.get("font_size", 0),
+                    bold=lb.get("bold", False),
+                    italic=lb.get("italic", False),
+                    color=lb.get("color", ""),
+                    alignment=lb.get("alignment", "left"),
+                    use_offset=lb.get("use_offset", False),
                 ))
             except Exception:
                 pass
@@ -123,6 +168,10 @@ class UserCompDef:
             symbol=symbol,
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
+            ref_label_offset_v=d.get("ref_label_offset_v", []),
+            val_label_offset_v=d.get("val_label_offset_v", []),
+            ref_label_style=d.get("ref_label_style", {}),
+            val_label_style=d.get("val_label_style", {}),
             labels=labels,
         )
 

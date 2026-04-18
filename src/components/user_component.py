@@ -10,6 +10,35 @@ from .base import ComponentItem, LabelItem, _std_pen
 from ..models.user_library import UserCompDef
 
 
+def _apply_label_style(label: LabelItem, style: dict) -> None:
+    """Feature 7: apply a style dict to a LabelItem.
+
+    Keys recognised: font_family, font_size, bold, italic, color.
+    Missing keys leave the existing setting unchanged.
+    """
+    if not style:
+        return
+    from PyQt6.QtGui import QFont as QF_, QBrush as QB_, QColor as QC_
+    fam = style.get("font_family", "")
+    sz = int(style.get("font_size", 0))
+    bold = bool(style.get("bold", False))
+    italic = bool(style.get("italic", False))
+    color = str(style.get("color", ""))
+
+    if fam or sz or bold or italic:
+        base = label.font()
+        f = QF_(fam if fam else base.family(),
+                sz if sz else base.pointSize())
+        f.setBold(bold)
+        f.setItalic(italic)
+        label.setFont(f)
+    if color:
+        try:
+            label.setBrush(QB_(QC_(color)))
+        except Exception:
+            pass
+
+
 class UserComponentItem(ComponentItem):
     """A component whose appearance is described by a UserCompDef."""
 
@@ -44,93 +73,133 @@ class UserComponentItem(ComponentItem):
             w, h = 60.0, 40.0
         self._WIDTH = w
         self._HEIGHT = h
-        # Keep label offsets outside the body; they will be overridden by
-        # the auto-layout below but need sensible defaults for super().__init__.
-        hh = h / 2
-        self._ref_label_offset = (0.0, -(hh + 16.0))  # type: ignore[assignment]
-        self._val_label_offset = (0.0, hh + 16.0)  # type: ignore[assignment]
+
+        # Bug 4 fix: use the stored label offsets from the component definition
+        # instead of computed defaults. The auto-layout will NOT override these.
+        ref_off = udef.ref_label_offset if udef.ref_label_offset else [0.0, -(h / 2 + 16.0)]
+        val_off = udef.val_label_offset if udef.val_label_offset else [0.0, h / 2 + 16.0]
+        self._ref_label_offset = (ref_off[0], ref_off[1])  # type: ignore[assignment]
+        self._val_label_offset = (val_off[0], val_off[1])  # type: ignore[assignment]
+        # Feature 8: V-perspective offsets (fallback to H if not set)
+        self._ref_offset_v: tuple[float, float] = (
+            udef.ref_label_offset_v[0], udef.ref_label_offset_v[1]
+        ) if udef.ref_label_offset_v else self._ref_label_offset
+        self._val_offset_v: tuple[float, float] = (
+            udef.val_label_offset_v[0], udef.val_label_offset_v[1]
+        ) if udef.val_label_offset_v else self._val_label_offset
+
         super().__init__(udef.type_name, ref, value, params, comp_id,
                          library_id=library_id)
+
+        # Feature 7: apply per-label styles to ref and val labels
+        _apply_label_style(self._ref_label, udef.ref_label_style)
+        _apply_label_style(self._val_label, udef.val_label_style)
 
         # Issue 14: extra-property visibility list (one entry per extra prop)
         self._extra_visible: list[bool] = [True] * len(udef.labels)
 
         # Issue 12: Extra properties (value displayed, not name)
-        # Issue 13: Positions computed by auto-layout below.
+        # Feature 6: positions come from LabelDef.dx/dy if use_offset=True,
+        #             otherwise side-based auto-layout is used.
         self._extra_labels: list[LabelItem] = []
         for ldef in udef.labels:
             # Display the instance value from params; fall back to default_value
             display_text = self.params.get(ldef.text, ldef.default_value)
             item = LabelItem(display_text, self)
+            # Feature 7: apply per-label style
+            style = {
+                "font_family": ldef.font_family,
+                "font_size": ldef.font_size,
+                "bold": ldef.bold,
+                "italic": ldef.italic,
+                "color": ldef.color,
+            }
+            _apply_label_style(item, style)
             self._extra_labels.append(item)
 
-        # Issue 13: compute non-overlapping layout for all labels
-        self._auto_layout_all_labels()
+        # Position extra labels (side-based for those without explicit offsets,
+        # explicit offsets for those with use_offset=True)
+        self._layout_extra_labels()
 
     # ------------------------------------------------------------------
-    # Issue 13: non-overlapping label layout
+    # Bug 4 / Feature 6: extra label layout
     # ------------------------------------------------------------------
 
-    def _auto_layout_all_labels(self) -> None:
-        """Compute and apply non-overlapping positions for all labels.
+    def _layout_extra_labels(self) -> None:
+        """Compute and apply positions for extra property labels.
 
-        Rules (Issue 13):
-        - Right, top, bottom sides: left-aligned.
-        - Left side: right-aligned.
-        - Top: labels arranged bottom-to-top (closest to body = lowest y).
-        - Bottom: labels arranged top-to-bottom (closest to body = highest y).
-        - Left/Right: symmetric around the component centre; spread up and
-          down from centre.
-        - Hidden labels do not occupy a position slot.
+        Labels with ``use_offset=True`` are placed at their stored dx/dy.
+        All other labels are arranged using the side-based auto-layout.
         """
         hw = self._WIDTH / 2
         hh = self._HEIGHT / 2
         margin = 16.0    # gap from body edge to first label
         spacing = 16.0   # gap between consecutive labels on the same side
 
-        # Collect (label_item, side, order) for labels that will be shown.
-        # ref → "top", val → "bottom".
         by_side: dict[str, list[tuple[LabelItem, int]]] = {
             "top": [], "bottom": [], "left": [], "right": []
         }
 
-        if self._show_ref_label and self._ref_visible:
-            by_side["top"].append((self._ref_label, -1000))
-        if self._show_val_label and self._val_visible and self.value:
-            by_side["bottom"].append((self._val_label, -1000))
         for i, (ldef, litem) in enumerate(zip(self._udef.labels,
                                                self._extra_labels)):
             if i < len(self._extra_visible) and not self._extra_visible[i]:
                 continue
-            side = ldef.side if ldef.side in by_side else "right"
-            by_side[side].append((litem, ldef.order))
+            if ldef.use_offset:
+                # Feature 6: use explicit offset directly
+                litem.setPos(QPointF(ldef.dx, ldef.dy))
+            else:
+                side = ldef.side if ldef.side in by_side else "right"
+                by_side[side].append((litem, ldef.order))
 
-        # Sort each side by order value
         for side in by_side:
             by_side[side].sort(key=lambda x: x[1])
 
-        # Apply positions
-        # Top: bottom-to-top (i=0 at y = -(hh+margin), decreasing y further up)
         for i, (label, _) in enumerate(by_side["top"]):
             label.setPos(QPointF(0.0, -(hh + margin + i * spacing)))
-
-        # Bottom: top-to-bottom (i=0 at y = hh+margin, increasing y further down)
         for i, (label, _) in enumerate(by_side["bottom"]):
             label.setPos(QPointF(0.0, hh + margin + i * spacing))
-
-        # Right: left-aligned, symmetric around centre
         right = [l for l, _ in by_side["right"]]
         n = len(right)
         for i, label in enumerate(right):
-            y = (i - (n - 1) / 2.0) * spacing
-            label.setPos(QPointF(hw + margin, y))
-
-        # Left: right-aligned, symmetric around centre
+            label.setPos(QPointF(hw + margin, (i - (n - 1) / 2.0) * spacing))
         left = [l for l, _ in by_side["left"]]
         n = len(left)
         for i, label in enumerate(left):
-            y = (i - (n - 1) / 2.0) * spacing
-            label.setPos(QPointF(-(hw + margin), y))
+            label.setPos(QPointF(-(hw + margin), (i - (n - 1) / 2.0) * spacing))
+
+    # Keep the old name as an alias so that callers in scene.py still work
+    def _auto_layout_all_labels(self) -> None:
+        """Alias kept for backward compatibility. Only lays out extra labels now."""
+        self._layout_extra_labels()
+
+    def _on_rotation_changed(self) -> None:
+        """Feature 8: update label positions when the component is rotated."""
+        self._apply_perspective_label_offsets()
+
+    def _apply_perspective_label_offsets(self) -> None:
+        """Feature 8: apply H or V label offsets based on the current rotation.
+
+        Horizontal (0° / 180°): use H offsets (ref_label_offset, val_label_offset).
+        Vertical (90° / 270°): use V offsets (ref_offset_v, val_offset_v).
+        """
+        import math
+        angle = self.rotation() % 360.0
+        # Consider 90° and 270° as "vertical" perspective
+        is_vertical = 80.0 < angle < 100.0 or 260.0 < angle < 280.0
+        if is_vertical and hasattr(self, "_ref_offset_v"):
+            self._ref_label.setPos(QPointF(*self._ref_offset_v))
+            self._val_label.setPos(QPointF(*self._val_offset_v))
+        else:
+            self._ref_label.setPos(QPointF(*self._ref_label_offset))
+            self._val_label.setPos(QPointF(*self._val_label_offset))
+        # Also apply explicit offsets to extra labels
+        is_v_flag = is_vertical
+        for i, (ldef, litem) in enumerate(zip(self._udef.labels,
+                                               self._extra_labels)):
+            if ldef.use_offset:
+                dx = ldef.dx_v if (is_v_flag and (ldef.dx_v or ldef.dy_v)) else ldef.dx
+                dy = ldef.dy_v if (is_v_flag and (ldef.dx_v or ldef.dy_v)) else ldef.dy
+                litem.setPos(QPointF(dx, dy))
 
     # ------------------------------------------------------------------
     # Issue 12: refresh extra labels after params change
@@ -150,7 +219,7 @@ class UserComponentItem(ComponentItem):
         super()._refresh_labels()
         self._refresh_extra_labels()
         # Re-run layout so hidden labels don't leave gaps
-        self._auto_layout_all_labels()
+        self._layout_extra_labels()
 
     # ------------------------------------------------------------------
     # Issue 14: serialise extra visibility

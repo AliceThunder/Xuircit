@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("&Tools")
         self._act_select_mode = self._action(
             "&Select", _sc("tools.select"),
-            lambda: self._scene.set_mode(SceneMode.SELECT),
+            self._on_select_mode,
             checkable=True, checked=True,
         )
         # Bug 1 fix: manual wire drawing is removed from the UI.
@@ -274,6 +274,9 @@ class MainWindow(QMainWindow):
             self._scene.set_annotation_layer_visible)
         self._layers_panel.annotation_tool_selected.connect(
             self._on_annotation_tool_selected)
+        # Feature 9: annotation fill toggle
+        self._layers_panel.annotation_fill_toggled.connect(
+            self._scene.set_annotation_fill)
         # Fix 9: reset annotation tool to select when ESC is pressed
         self._scene.annotation_tool_reset.connect(
             self._layers_panel.reset_annotation_tool)
@@ -281,6 +284,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _on_select_mode(self) -> None:
+        """Switch to select mode and reset annotation tool (Bug 3 fix)."""
+        self._scene.set_mode(SceneMode.SELECT)
+        # Bug 3 fix: also reset the annotation tool so the Layers panel UI
+        # correctly shows 'Select' after pressing ESC.
+        self._layers_panel.reset_annotation_tool()
 
     def _on_place_requested(self, comp_type: str) -> None:
         self._scene.set_mode(SceneMode.PLACE_COMPONENT)
@@ -461,6 +471,7 @@ class MainWindow(QMainWindow):
             item.setSelected(True)
 
     def _delete_selected(self) -> None:
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
         changed = False
         for item in list(self._scene.selectedItems()):
             if isinstance(item, ComponentItem):
@@ -468,6 +479,10 @@ class MainWindow(QMainWindow):
                 changed = True
             elif isinstance(item, WireItem):
                 self._circuit.remove_wire(item.wire_id)
+            elif isinstance(item, (AnnotationItem, TextAnnotationItem)):
+                # Bug 1 fix: also remove annotations from the circuit model so
+                # they are not restored by rebuild_from_circuit on Ctrl+V paste.
+                self._circuit.remove_annotation(item.anno_id)
             self._scene.removeItem(item)
         if changed:
             self._scene._rebuild_auto_wires()

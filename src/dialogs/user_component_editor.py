@@ -109,6 +109,8 @@ class _SymbolScene(QGraphicsScene):
         # Task 2: property position markers (Ref = Basic Property, Val = Extra Property)
         self._ref_marker: "_PropertyMarkerItem | None" = None
         self._val_marker: "_PropertyMarkerItem | None" = None
+        # Feature 6: markers for extra properties (one per LabelDef, by index)
+        self._extra_markers: list["_PropertyMarkerItem | None"] = []
         self._draw_origin()
 
     def _draw_origin(self) -> None:
@@ -593,6 +595,34 @@ class _SymbolScene(QGraphicsScene):
             self.addItem(self._val_marker)
         self._val_marker.setPos(dx, dy)
 
+    def set_extra_marker(self, idx: int, label: str, dx: float, dy: float,
+                         on_moved: "object | None" = None) -> None:
+        """Feature 6: place or move the position marker for an extra property."""
+        while len(self._extra_markers) <= idx:
+            self._extra_markers.append(None)
+        if self._extra_markers[idx] is None:
+            m = _PropertyMarkerItem(f"⊕ {label}", QColor("#005588"), on_moved)
+            self.addItem(m)
+            self._extra_markers[idx] = m
+        else:
+            self._extra_markers[idx]._on_moved = on_moved
+        self._extra_markers[idx].setPos(dx, dy)
+
+    def remove_extra_marker(self, idx: int) -> None:
+        """Feature 6: remove the extra property marker at *idx*."""
+        if 0 <= idx < len(self._extra_markers):
+            m = self._extra_markers[idx]
+            if m is not None:
+                self.removeItem(m)
+            self._extra_markers[idx] = None
+
+    def clear_extra_markers(self) -> None:
+        """Feature 6: remove all extra property position markers."""
+        for m in self._extra_markers:
+            if m is not None:
+                self.removeItem(m)
+        self._extra_markers.clear()
+
     def clear_symbol(self) -> None:
         for item in list(self.items()):
             self.removeItem(item)
@@ -606,6 +636,7 @@ class _SymbolScene(QGraphicsScene):
         # Property markers are removed by the clear above; reset references
         self._ref_marker = None
         self._val_marker = None
+        self._extra_markers.clear()
         self._draw_origin()
 
     def load_def(self, udef: UserCompDef) -> None:
@@ -728,6 +759,11 @@ class _PropertyMarkerItem(QGraphicsItem):
             if self._on_moved is not None:
                 p = value  # type: ignore[assignment]
                 self._on_moved(p.x(), p.y())  # type: ignore[union-attr]
+            # Bug 5 fix: invalidate the whole scene so the old marker position
+            # is repainted and the residual shadow is erased immediately.
+            scene = self.scene()
+            if scene is not None:
+                scene.update(scene.sceneRect())
         return super().itemChange(change, value)
 
 
@@ -919,7 +955,8 @@ class UserComponentEditorDialog(QDialog):
         lbl = QLabel(
             "Draw symbol (hover the canvas to reveal tool icons).\n"
             "Pins snap to grid. Other shapes snap to sub-grid.\n"
-            "⊕ Ref (orange) = Basic Property position  ⊕ Val (green) = Extra Property position.\n"
+            "⊕ Orange=Ref (Basic), ⊕ Green=Val (Value), ⊕ Blue=Extra Property positions.\n"
+            "H/V toggle (right panel) switches between horizontal/vertical perspective markers.\n"
             "Keys: Del=delete  Ctrl+C/V=copy/paste  M=mirror  Arrows=move  "
             "Ctrl+Z/Y=undo/redo  Right-click=cancel drawing."
         )
@@ -985,9 +1022,25 @@ class UserComponentEditorDialog(QDialog):
 
         right.addWidget(form_box)
 
-        # Fix 8: Label position defaults
-        label_pos_box = QGroupBox("Default Label Positions (dx, dy from component origin)")
+        # Fix 8: Label position defaults with perspective support (Feature 8)
+        label_pos_box = QGroupBox("Default Label Positions & Styles")
         label_pos_form = QFormLayout(label_pos_box)
+
+        # Feature 8: perspective toggle (H = normal, V = rotated 90°)
+        from PyQt6.QtWidgets import QRadioButton, QButtonGroup, QSpinBox
+        persp_row = QHBoxLayout()
+        persp_row.addWidget(QLabel("Canvas markers perspective:"))
+        self._persp_h_rb = QRadioButton("Horizontal (H)")
+        self._persp_v_rb = QRadioButton("Vertical / Rotated (V)")
+        self._persp_h_rb.setChecked(True)
+        self._persp_h_rb.setToolTip("Show position markers for the normal (unrotated) view")
+        self._persp_v_rb.setToolTip("Show position markers for the vertical (rotated 90°) view")
+        self._persp_group = QButtonGroup(self)
+        self._persp_group.addButton(self._persp_h_rb)
+        self._persp_group.addButton(self._persp_v_rb)
+        persp_row.addWidget(self._persp_h_rb)
+        persp_row.addWidget(self._persp_v_rb)
+        label_pos_form.addRow(persp_row)
 
         def _make_dspin(val: float) -> QDoubleSpinBox:
             s = QDoubleSpinBox()
@@ -997,23 +1050,96 @@ class UserComponentEditorDialog(QDialog):
             s.setValue(val)
             return s
 
-        ref_row = QHBoxLayout()
+        def _make_ispin(val: int) -> QSpinBox:
+            s = QSpinBox()
+            s.setRange(0, 72)
+            s.setValue(val)
+            return s
+
+        # ── Ref label ──
+        ref_h_row = QHBoxLayout()
         self._ref_dx_spin = _make_dspin(0.0)
         self._ref_dy_spin = _make_dspin(-22.0)
-        ref_row.addWidget(QLabel("dx:"))
-        ref_row.addWidget(self._ref_dx_spin)
-        ref_row.addWidget(QLabel("dy:"))
-        ref_row.addWidget(self._ref_dy_spin)
-        label_pos_form.addRow("Ref label:", ref_row)
+        ref_h_row.addWidget(QLabel("H  dx:")); ref_h_row.addWidget(self._ref_dx_spin)
+        ref_h_row.addWidget(QLabel("dy:")); ref_h_row.addWidget(self._ref_dy_spin)
+        label_pos_form.addRow("Ref label pos:", ref_h_row)
 
-        val_row = QHBoxLayout()
+        ref_v_row = QHBoxLayout()
+        self._ref_dx_v_spin = _make_dspin(0.0)
+        self._ref_dy_v_spin = _make_dspin(-22.0)
+        ref_v_row.addWidget(QLabel("V  dx:")); ref_v_row.addWidget(self._ref_dx_v_spin)
+        ref_v_row.addWidget(QLabel("dy:")); ref_v_row.addWidget(self._ref_dy_v_spin)
+        label_pos_form.addRow("", ref_v_row)
+
+        # Feature 7: Ref label style
+        ref_style_row = QHBoxLayout()
+        self._ref_font_family_edit = QLineEdit("")
+        self._ref_font_family_edit.setPlaceholderText("font (blank=default)")
+        self._ref_font_family_edit.setMaximumWidth(110)
+        self._ref_font_size_spin = _make_ispin(0)
+        self._ref_font_size_spin.setToolTip("0=default size")
+        self._ref_font_size_spin.setMaximumWidth(50)
+        self._ref_bold_cb = QCheckBox("B")
+        self._ref_bold_cb.setToolTip("Bold")
+        self._ref_italic_cb = QCheckBox("I")
+        self._ref_italic_cb.setToolTip("Italic")
+        self._ref_color_edit = QLineEdit("")
+        self._ref_color_edit.setPlaceholderText("#rrggbb")
+        self._ref_color_edit.setMaximumWidth(75)
+        self._ref_align_combo = QComboBox()
+        for _a in ("left", "center", "right"):
+            self._ref_align_combo.addItem(_a)
+        ref_style_row.addWidget(QLabel("Style:"))
+        ref_style_row.addWidget(self._ref_font_family_edit)
+        ref_style_row.addWidget(self._ref_font_size_spin)
+        ref_style_row.addWidget(self._ref_bold_cb)
+        ref_style_row.addWidget(self._ref_italic_cb)
+        ref_style_row.addWidget(self._ref_color_edit)
+        ref_style_row.addWidget(self._ref_align_combo)
+        label_pos_form.addRow("Ref style:", ref_style_row)
+
+        # ── Val label ──
+        val_h_row = QHBoxLayout()
         self._val_dx_spin = _make_dspin(0.0)
         self._val_dy_spin = _make_dspin(14.0)
-        val_row.addWidget(QLabel("dx:"))
-        val_row.addWidget(self._val_dx_spin)
-        val_row.addWidget(QLabel("dy:"))
-        val_row.addWidget(self._val_dy_spin)
-        label_pos_form.addRow("Val label:", val_row)
+        val_h_row.addWidget(QLabel("H  dx:")); val_h_row.addWidget(self._val_dx_spin)
+        val_h_row.addWidget(QLabel("dy:")); val_h_row.addWidget(self._val_dy_spin)
+        label_pos_form.addRow("Val label pos:", val_h_row)
+
+        val_v_row = QHBoxLayout()
+        self._val_dx_v_spin = _make_dspin(0.0)
+        self._val_dy_v_spin = _make_dspin(14.0)
+        val_v_row.addWidget(QLabel("V  dx:")); val_v_row.addWidget(self._val_dx_v_spin)
+        val_v_row.addWidget(QLabel("dy:")); val_v_row.addWidget(self._val_dy_v_spin)
+        label_pos_form.addRow("", val_v_row)
+
+        # Feature 7: Val label style
+        val_style_row = QHBoxLayout()
+        self._val_font_family_edit = QLineEdit("")
+        self._val_font_family_edit.setPlaceholderText("font (blank=default)")
+        self._val_font_family_edit.setMaximumWidth(110)
+        self._val_font_size_spin = _make_ispin(0)
+        self._val_font_size_spin.setToolTip("0=default size")
+        self._val_font_size_spin.setMaximumWidth(50)
+        self._val_bold_cb = QCheckBox("B")
+        self._val_bold_cb.setToolTip("Bold")
+        self._val_italic_cb = QCheckBox("I")
+        self._val_italic_cb.setToolTip("Italic")
+        self._val_color_edit = QLineEdit("")
+        self._val_color_edit.setPlaceholderText("#rrggbb")
+        self._val_color_edit.setMaximumWidth(75)
+        self._val_align_combo = QComboBox()
+        for _a in ("left", "center", "right"):
+            self._val_align_combo.addItem(_a)
+        val_style_row.addWidget(QLabel("Style:"))
+        val_style_row.addWidget(self._val_font_family_edit)
+        val_style_row.addWidget(self._val_font_size_spin)
+        val_style_row.addWidget(self._val_bold_cb)
+        val_style_row.addWidget(self._val_italic_cb)
+        val_style_row.addWidget(self._val_color_edit)
+        val_style_row.addWidget(self._val_align_combo)
+
+        label_pos_form.addRow("Val style:", val_style_row)
 
         right.addWidget(label_pos_box)
 
@@ -1078,13 +1204,40 @@ class UserComponentEditorDialog(QDialog):
             self._value_edit.setText(existing.default_value)
             # Fix 3: virtual flag
             self._virtual_cb.setChecked(getattr(existing, "is_virtual", False))
-            # Fix 8: label position defaults
+            # Fix 8: label position defaults (H perspective)
             ref_off = getattr(existing, "ref_label_offset", [0.0, -22.0])
             val_off = getattr(existing, "val_label_offset", [0.0, 14.0])
             self._ref_dx_spin.setValue(ref_off[0] if ref_off else 0.0)
             self._ref_dy_spin.setValue(ref_off[1] if len(ref_off) > 1 else -22.0)
             self._val_dx_spin.setValue(val_off[0] if val_off else 0.0)
             self._val_dy_spin.setValue(val_off[1] if len(val_off) > 1 else 14.0)
+            # Feature 8: V-perspective offsets (fall back to H if not set)
+            ref_off_v = getattr(existing, "ref_label_offset_v", []) or ref_off
+            val_off_v = getattr(existing, "val_label_offset_v", []) or val_off
+            self._ref_dx_v_spin.setValue(ref_off_v[0] if ref_off_v else 0.0)
+            self._ref_dy_v_spin.setValue(ref_off_v[1] if len(ref_off_v) > 1 else -22.0)
+            self._val_dx_v_spin.setValue(val_off_v[0] if val_off_v else 0.0)
+            self._val_dy_v_spin.setValue(val_off_v[1] if len(val_off_v) > 1 else 14.0)
+            # Feature 7: pre-fill ref style
+            ref_style = getattr(existing, "ref_label_style", {}) or {}
+            self._ref_font_family_edit.setText(ref_style.get("font_family", ""))
+            self._ref_font_size_spin.setValue(int(ref_style.get("font_size", 0)))
+            self._ref_bold_cb.setChecked(bool(ref_style.get("bold", False)))
+            self._ref_italic_cb.setChecked(bool(ref_style.get("italic", False)))
+            self._ref_color_edit.setText(ref_style.get("color", ""))
+            ref_align = ref_style.get("alignment", "left")
+            self._ref_align_combo.setCurrentIndex(
+                max(0, self._ref_align_combo.findText(ref_align)))
+            # Feature 7: pre-fill val style
+            val_style = getattr(existing, "val_label_style", {}) or {}
+            self._val_font_family_edit.setText(val_style.get("font_family", ""))
+            self._val_font_size_spin.setValue(int(val_style.get("font_size", 0)))
+            self._val_bold_cb.setChecked(bool(val_style.get("bold", False)))
+            self._val_italic_cb.setChecked(bool(val_style.get("italic", False)))
+            self._val_color_edit.setText(val_style.get("color", ""))
+            val_align = val_style.get("alignment", "left")
+            self._val_align_combo.setCurrentIndex(
+                max(0, self._val_align_combo.findText(val_align)))
             if not existing.is_builtin:
                 # Load custom symbol only for user-defined entries
                 _sym_udef = UserCompDef(
@@ -1106,6 +1259,8 @@ class UserComponentEditorDialog(QDialog):
                             h=s.get("h", 0.0) if isinstance(s, dict) else s.h,
                             text=s.get("text", "") if isinstance(s, dict) else s.text,
                             filled=s.get("filled", False) if isinstance(s, dict) else s.filled,
+                            # Bug 2 fix: include points so polylines are preserved on re-edit
+                            points=s.get("points", []) if isinstance(s, dict) else s.points,
                         )
                         for s in existing.symbol
                     ],
@@ -1122,6 +1277,17 @@ class UserComponentEditorDialog(QDialog):
                         side=lbl_dict.get("side", "top"),
                         order=lbl_dict.get("order", 0),
                         default_value=lbl_dict.get("default_value", ""),
+                        dx=lbl_dict.get("dx", 0.0),
+                        dy=lbl_dict.get("dy", 0.0),
+                        dx_v=lbl_dict.get("dx_v", 0.0),
+                        dy_v=lbl_dict.get("dy_v", 0.0),
+                        font_family=lbl_dict.get("font_family", ""),
+                        font_size=lbl_dict.get("font_size", 0),
+                        bold=lbl_dict.get("bold", False),
+                        italic=lbl_dict.get("italic", False),
+                        color=lbl_dict.get("color", ""),
+                        alignment=lbl_dict.get("alignment", "left"),
+                        use_offset=lbl_dict.get("use_offset", False),
                     )
                 else:
                     ldef = lbl_dict
@@ -1139,43 +1305,118 @@ class UserComponentEditorDialog(QDialog):
         self._ref_dy_spin.valueChanged.connect(self._sync_ref_marker_from_spins)
         self._val_dx_spin.valueChanged.connect(self._sync_val_marker_from_spins)
         self._val_dy_spin.valueChanged.connect(self._sync_val_marker_from_spins)
+        self._ref_dx_v_spin.valueChanged.connect(self._sync_ref_marker_from_spins)
+        self._ref_dy_v_spin.valueChanged.connect(self._sync_ref_marker_from_spins)
+        self._val_dx_v_spin.valueChanged.connect(self._sync_val_marker_from_spins)
+        self._val_dy_v_spin.valueChanged.connect(self._sync_val_marker_from_spins)
+        # Feature 8: perspective toggle
+        self._persp_h_rb.toggled.connect(self._on_perspective_changed)
+        self._persp_v_rb.toggled.connect(self._on_perspective_changed)
+
+    def _is_v_perspective(self) -> bool:
+        """Feature 8: return True if the vertical (rotated) perspective is active."""
+        return self._persp_v_rb.isChecked()
 
     def _init_property_markers(self) -> None:
-        """Task 2: place property-position markers on the symbol canvas."""
-        rdx, rdy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
-        vdx, vdy = self._val_dx_spin.value(), self._val_dy_spin.value()
+        """Task 2 / Feature 6/8: place property-position markers on the symbol canvas."""
+        if self._is_v_perspective():
+            rdx, rdy = self._ref_dx_v_spin.value(), self._ref_dy_v_spin.value()
+            vdx, vdy = self._val_dx_v_spin.value(), self._val_dy_v_spin.value()
+        else:
+            rdx, rdy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
+            vdx, vdy = self._val_dx_spin.value(), self._val_dy_spin.value()
         self._sym_scene.set_ref_marker(rdx, rdy, self._on_ref_marker_moved)
         self._sym_scene.set_val_marker(vdx, vdy, self._on_val_marker_moved)
+        # Feature 6: extra property markers
+        self._sync_extra_markers()
+
+    def _on_perspective_changed(self, checked: bool) -> None:
+        """Feature 8: switch the canvas markers to show H or V perspective."""
+        if not checked:
+            return
+        # Move markers to the position for the newly selected perspective
+        self._sync_ref_marker_from_spins()
+        self._sync_val_marker_from_spins()
+        self._sync_extra_markers()
 
     def _sync_ref_marker_from_spins(self) -> None:
         """Move the Ref marker when the spin boxes change."""
-        dx, dy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
+        if self._is_v_perspective():
+            dx, dy = self._ref_dx_v_spin.value(), self._ref_dy_v_spin.value()
+        else:
+            dx, dy = self._ref_dx_spin.value(), self._ref_dy_spin.value()
         if self._sym_scene._ref_marker is not None:
             self._sym_scene._ref_marker.setPos(dx, dy)
 
     def _sync_val_marker_from_spins(self) -> None:
         """Move the Val marker when the spin boxes change."""
-        dx, dy = self._val_dx_spin.value(), self._val_dy_spin.value()
+        if self._is_v_perspective():
+            dx, dy = self._val_dx_v_spin.value(), self._val_dy_v_spin.value()
+        else:
+            dx, dy = self._val_dx_spin.value(), self._val_dy_spin.value()
         if self._sym_scene._val_marker is not None:
             self._sym_scene._val_marker.setPos(dx, dy)
 
+    def _sync_extra_markers(self) -> None:
+        """Feature 6/8: create/update extra property markers for all label_defs."""
+        is_v = self._is_v_perspective()
+        # Remove markers that are no longer needed
+        for idx in range(len(self._label_defs), len(self._sym_scene._extra_markers)):
+            self._sym_scene.remove_extra_marker(idx)
+        # Create/update markers for each label_def
+        for idx, ldef in enumerate(self._label_defs):
+            dx = ldef.dx_v if is_v else ldef.dx
+            dy = ldef.dy_v if is_v else ldef.dy
+            self._sym_scene.set_extra_marker(
+                idx, ldef.text, dx, dy,
+                lambda x, y, i=idx: self._on_extra_marker_moved(i, x, y)
+            )
+
+    def _on_extra_marker_moved(self, idx: int, x: float, y: float) -> None:
+        """Feature 6/8: update LabelDef when an extra property marker is dragged."""
+        if 0 <= idx < len(self._label_defs):
+            ld = self._label_defs[idx]
+            if self._is_v_perspective():
+                ld.dx_v = x
+                ld.dy_v = y
+            else:
+                ld.dx = x
+                ld.dy = y
+            ld.use_offset = True
+
     def _on_ref_marker_moved(self, x: float, y: float) -> None:
         """Update spin boxes when the Ref marker is dragged."""
-        self._ref_dx_spin.blockSignals(True)
-        self._ref_dy_spin.blockSignals(True)
-        self._ref_dx_spin.setValue(x)
-        self._ref_dy_spin.setValue(y)
-        self._ref_dx_spin.blockSignals(False)
-        self._ref_dy_spin.blockSignals(False)
+        if self._is_v_perspective():
+            self._ref_dx_v_spin.blockSignals(True)
+            self._ref_dy_v_spin.blockSignals(True)
+            self._ref_dx_v_spin.setValue(x)
+            self._ref_dy_v_spin.setValue(y)
+            self._ref_dx_v_spin.blockSignals(False)
+            self._ref_dy_v_spin.blockSignals(False)
+        else:
+            self._ref_dx_spin.blockSignals(True)
+            self._ref_dy_spin.blockSignals(True)
+            self._ref_dx_spin.setValue(x)
+            self._ref_dy_spin.setValue(y)
+            self._ref_dx_spin.blockSignals(False)
+            self._ref_dy_spin.blockSignals(False)
 
     def _on_val_marker_moved(self, x: float, y: float) -> None:
         """Update spin boxes when the Val marker is dragged."""
-        self._val_dx_spin.blockSignals(True)
-        self._val_dy_spin.blockSignals(True)
-        self._val_dx_spin.setValue(x)
-        self._val_dy_spin.setValue(y)
-        self._val_dx_spin.blockSignals(False)
-        self._val_dy_spin.blockSignals(False)
+        if self._is_v_perspective():
+            self._val_dx_v_spin.blockSignals(True)
+            self._val_dy_v_spin.blockSignals(True)
+            self._val_dx_v_spin.setValue(x)
+            self._val_dy_v_spin.setValue(y)
+            self._val_dx_v_spin.blockSignals(False)
+            self._val_dy_v_spin.blockSignals(False)
+        else:
+            self._val_dx_spin.blockSignals(True)
+            self._val_dy_spin.blockSignals(True)
+            self._val_dx_spin.setValue(x)
+            self._val_dy_spin.setValue(y)
+            self._val_dx_spin.blockSignals(False)
+            self._val_dy_spin.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Issue 1: built-in component preview
@@ -1232,10 +1473,24 @@ class UserComponentEditorDialog(QDialog):
     def _refresh_label_list(self) -> None:
         self._label_list.clear()
         for ld in self._label_defs:
+            style_parts = []
+            if ld.font_family:
+                style_parts.append(ld.font_family)
+            if ld.font_size:
+                style_parts.append(f"{ld.font_size}pt")
+            if ld.bold:
+                style_parts.append("B")
+            if ld.italic:
+                style_parts.append("I")
+            if ld.color:
+                style_parts.append(ld.color)
+            style_str = f"  style={','.join(style_parts)}" if style_parts else ""
+            offset_str = (f"  pos=({ld.dx:.0f},{ld.dy:.0f})"
+                          if ld.use_offset else "")
             self._label_list.addItem(
                 f"{ld.text!r}  [{ld.side}  order={ld.order}"
                 + (f"  default={ld.default_value!r}" if ld.default_value else "")
-                + "]"
+                + style_str + offset_str + "]"
             )
 
     def _add_label(self) -> None:
@@ -1243,20 +1498,33 @@ class UserComponentEditorDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._label_defs.append(dlg.label_def())
             self._refresh_label_list()
+            self._sync_extra_markers()
 
     def _edit_label(self) -> None:
         row = self._label_list.currentRow()
         if 0 <= row < len(self._label_defs):
             dlg = _LabelEditDialog(self, self._label_defs[row])
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                self._label_defs[row] = dlg.label_def()
+                updated = dlg.label_def()
+                # Preserve the position data (dx/dy) set via canvas markers
+                old = self._label_defs[row]
+                updated.dx = old.dx
+                updated.dy = old.dy
+                updated.dx_v = old.dx_v
+                updated.dy_v = old.dy_v
+                updated.use_offset = old.use_offset
+                self._label_defs[row] = updated
                 self._refresh_label_list()
+                self._sync_extra_markers()
 
     def _remove_label(self) -> None:
         row = self._label_list.currentRow()
         if 0 <= row < len(self._label_defs):
+            self._sym_scene.remove_extra_marker(row)
+            self._sym_scene._extra_markers.pop(row)
             self._label_defs.pop(row)
             self._refresh_label_list()
+            self._sync_extra_markers()
 
     # ------------------------------------------------------------------
 
@@ -1280,10 +1548,28 @@ class UserComponentEditorDialog(QDialog):
         if self._existing is not None:
             is_builtin = self._existing.is_builtin
 
-        # Issue 12: include default_value in label serialisation
+        # Issue 12: include all LabelDef fields in label serialisation
+        # Feature 6: include dx/dy offsets and use_offset
+        # Feature 7: include style fields
+        # Feature 8: include V-perspective offsets
         labels_data = [
-            {"text": ld.text, "side": ld.side, "order": ld.order,
-             "default_value": ld.default_value}
+            {
+                "text": ld.text,
+                "side": ld.side,
+                "order": ld.order,
+                "default_value": ld.default_value,
+                "dx": ld.dx,
+                "dy": ld.dy,
+                "dx_v": ld.dx_v,
+                "dy_v": ld.dy_v,
+                "font_family": ld.font_family,
+                "font_size": ld.font_size,
+                "bold": ld.bold,
+                "italic": ld.italic,
+                "color": ld.color,
+                "alignment": ld.alignment,
+                "use_offset": ld.use_offset,
+            }
             for ld in self._label_defs
         ]
 
@@ -1301,13 +1587,37 @@ class UserComponentEditorDialog(QDialog):
             labels=labels_data,
             # Fix 3: virtual flag
             is_virtual=self._virtual_cb.isChecked(),
-            # Fix 8: label position defaults
+            # Fix 8: label position defaults (H perspective)
             ref_label_offset=[
                 self._ref_dx_spin.value(), self._ref_dy_spin.value()
             ],
             val_label_offset=[
                 self._val_dx_spin.value(), self._val_dy_spin.value()
             ],
+            # Feature 8: V-perspective offsets
+            ref_label_offset_v=[
+                self._ref_dx_v_spin.value(), self._ref_dy_v_spin.value()
+            ],
+            val_label_offset_v=[
+                self._val_dx_v_spin.value(), self._val_dy_v_spin.value()
+            ],
+            # Feature 7: ref/val label styles
+            ref_label_style={
+                "font_family": self._ref_font_family_edit.text().strip(),
+                "font_size": self._ref_font_size_spin.value(),
+                "bold": self._ref_bold_cb.isChecked(),
+                "italic": self._ref_italic_cb.isChecked(),
+                "color": self._ref_color_edit.text().strip(),
+                "alignment": self._ref_align_combo.currentText(),
+            },
+            val_label_style={
+                "font_family": self._val_font_family_edit.text().strip(),
+                "font_size": self._val_font_size_spin.value(),
+                "bold": self._val_bold_cb.isChecked(),
+                "italic": self._val_italic_cb.isChecked(),
+                "color": self._val_color_edit.text().strip(),
+                "alignment": self._val_align_combo.currentText(),
+            },
         )
 
         lm = LibraryManager()
@@ -1335,6 +1645,8 @@ class _LabelEditDialog(QDialog):
     - Default value: displayed next to the component when no instance
       value has been set.
     - Side and order: layout position.
+    Feature 7: per-label font, size, bold, italic, color, alignment.
+    Feature 6: use_offset flag enables explicit dx/dy positioning.
     """
 
     def __init__(self, parent: QWidget | None = None,
@@ -1358,10 +1670,45 @@ class _LabelEditDialog(QDialog):
             idx = self._side_combo.findText(ldef.side)
             if idx >= 0:
                 self._side_combo.setCurrentIndex(idx)
-        layout.addRow("Side:", self._side_combo)
+        layout.addRow("Side (auto layout):", self._side_combo)
 
         self._order_edit = QLineEdit(str(ldef.order) if ldef else "0")
         layout.addRow("Order (0 = first):", self._order_edit)
+
+        # Feature 7: per-label style
+        from PyQt6.QtWidgets import QSpinBox
+        self._font_family_edit = QLineEdit(
+            ldef.font_family if (ldef and ldef.font_family) else "")
+        self._font_family_edit.setPlaceholderText("blank = app default")
+        layout.addRow("Font family:", self._font_family_edit)
+
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(0, 72)
+        self._font_size_spin.setValue(ldef.font_size if ldef else 0)
+        self._font_size_spin.setToolTip("0 = application default font size")
+        layout.addRow("Font size (0=default):", self._font_size_spin)
+
+        self._bold_cb = QCheckBox()
+        self._bold_cb.setChecked(ldef.bold if ldef else False)
+        layout.addRow("Bold:", self._bold_cb)
+
+        self._italic_cb = QCheckBox()
+        self._italic_cb.setChecked(ldef.italic if ldef else False)
+        layout.addRow("Italic:", self._italic_cb)
+
+        self._color_edit = QLineEdit(
+            ldef.color if (ldef and ldef.color) else "")
+        self._color_edit.setPlaceholderText("#rrggbb or blank = component color")
+        layout.addRow("Color:", self._color_edit)
+
+        self._align_combo = QComboBox()
+        for a in ("left", "center", "right"):
+            self._align_combo.addItem(a)
+        if ldef:
+            idx = self._align_combo.findText(ldef.alignment)
+            if idx >= 0:
+                self._align_combo.setCurrentIndex(idx)
+        layout.addRow("Alignment:", self._align_combo)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
@@ -1381,6 +1728,12 @@ class _LabelEditDialog(QDialog):
             side=self._side_combo.currentText(),
             order=order,
             default_value=self._default_edit.text().strip(),
+            font_family=self._font_family_edit.text().strip(),
+            font_size=self._font_size_spin.value(),
+            bold=self._bold_cb.isChecked(),
+            italic=self._italic_cb.isChecked(),
+            color=self._color_edit.text().strip(),
+            alignment=self._align_combo.currentText(),
         )
 
 

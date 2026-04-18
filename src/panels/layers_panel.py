@@ -23,11 +23,13 @@ class LayersPanel(QDockWidget):
     - annotation_layer_toggled(bool): annotation layer visibility changed
     - annotation_tool_selected(str): one of "select", "line", "arrow",
       "circle", "ellipse", "rect", "polyline" selected for drawing
+    - annotation_fill_toggled(bool): annotation fill mode changed (Feature #9)
     """
 
     component_layer_toggled = pyqtSignal(bool)
     annotation_layer_toggled = pyqtSignal(bool)
     annotation_tool_selected = pyqtSignal(str)
+    annotation_fill_toggled = pyqtSignal(bool)  # Feature 9
 
     def __init__(self, parent=None) -> None:
         super().__init__("Layers", parent)
@@ -93,6 +95,18 @@ class LayersPanel(QDockWidget):
 
         # Select is checked by default
         self._tool_group.buttons()[0].setChecked(True)
+
+        # Feature 9: fill toggle for annotation shapes
+        fill_row = QHBoxLayout()
+        self._fill_cb = QCheckBox("Solid Fill")
+        self._fill_cb.setChecked(False)
+        self._fill_cb.setToolTip(
+            "When checked, closed annotation shapes (rect, ellipse, circle,\n"
+            "closed polyline) will be filled with the annotation color."
+        )
+        self._fill_cb.toggled.connect(self.annotation_fill_toggled.emit)
+        fill_row.addWidget(self._fill_cb)
+        anno_layout.addLayout(fill_row)
 
         layout.addWidget(anno_box)
         layout.addStretch()

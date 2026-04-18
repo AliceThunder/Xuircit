@@ -519,10 +519,15 @@ class ComponentItem(QGraphicsItem):
     def _rotate_cw(self) -> None:
         self.setRotation(self.rotation() + 90)
         self._notify_scene_changed()
+        self._on_rotation_changed()
 
     def _rotate_ccw(self) -> None:
         self.setRotation(self.rotation() - 90)
         self._notify_scene_changed()
+        self._on_rotation_changed()
+
+    def _on_rotation_changed(self) -> None:
+        """Hook for subclasses to react to rotation changes (e.g. Feature 8)."""
 
     def _flip_h(self) -> None:
         """Flip horizontally (mirror about vertical axis)."""

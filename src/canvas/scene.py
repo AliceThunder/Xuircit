@@ -1128,17 +1128,6 @@ class CircuitScene(QGraphicsScene):
                     item.setTransform(t)
                 item._flip_h_active = fh
                 item._flip_v_active = fv
-                # Restore label positions, migrating from old format if needed
-                lrp = comp.get("label_ref_pos")
-                if lrp:
-                    if label_format < 2:
-                        lrp = _migrate_label_pos(lrp, rot)
-                    item._ref_label.setPos(QPointF(lrp[0], lrp[1]))
-                lvp = comp.get("label_val_pos")
-                if lvp:
-                    if label_format < 2:
-                        lvp = _migrate_label_pos(lvp, rot)
-                    item._val_label.setPos(QPointF(lvp[0], lvp[1]))
                 # Issue 14: restore per-label visibility flags
                 item._ref_visible = comp.get("ref_visible", True)
                 item._val_visible = comp.get("val_visible", True)
@@ -1155,7 +1144,22 @@ class CircuitScene(QGraphicsScene):
                             if i < len(item._extra_visible):
                                 item._extra_visible[i] = bool(v)
                     item._refresh_extra_labels()
-                    item._auto_layout_all_labels()
+                    # Bug 4 fix: run extra-label layout BEFORE restoring explicit
+                    # label positions so the restore wins over auto-layout.
+                    item._layout_extra_labels()
+                    # Feature 8: apply perspective offsets based on saved rotation
+                    item._apply_perspective_label_offsets()
+                # Restore label positions, migrating from old format if needed
+                lrp = comp.get("label_ref_pos")
+                if lrp:
+                    if label_format < 2:
+                        lrp = _migrate_label_pos(lrp, rot)
+                    item._ref_label.setPos(QPointF(lrp[0], lrp[1]))
+                lvp = comp.get("label_val_pos")
+                if lvp:
+                    if label_format < 2:
+                        lvp = _migrate_label_pos(lvp, rot)
+                    item._val_label.setPos(QPointF(lvp[0], lvp[1]))
                 self.addItem(item)
 
         # Wires are auto-generated — no need to restore from file
