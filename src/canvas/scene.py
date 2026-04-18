@@ -21,6 +21,24 @@ _PIN_SNAP_RADIUS = GRID_SIZE * 0.8
 _COORD_EPSILON = 1.0
 
 
+def _migrate_label_pos(pos: list[float], rotation: float) -> list[float]:
+    """Convert a label position from old screen-space (pre-v2 format) to
+    parent-local space by applying inverse rotation.
+
+    In old project files the label offset was manually rotated every time the
+    component was rotated via ``_rotate_label_offset``.  The new rendering
+    approach stores the offset in parent-local space (it never changes when
+    the component rotates).  To recover the parent-local offset from an old
+    saved value, apply the inverse rotation (CCW) the same number of times.
+    """
+    x, y = pos[0], pos[1]
+    n = int(round(rotation / 90)) % 4
+    # Inverse of n CW rotations = n CCW rotations; CCW formula: (x,y)→(y,−x)
+    for _ in range(n):
+        x, y = y, -x
+    return [x, y]
+
+
 class SceneMode(Enum):
     SELECT = auto()
     PLACE_COMPONENT = auto()
@@ -105,7 +123,7 @@ def create_component_item(
                     item.library_id = found_lib_id
                     return item
             # User-defined rendering
-            from ..models.user_library import UserCompDef, PinDef, SymbolCmd
+            from ..models.user_library import UserCompDef, PinDef, SymbolCmd, LabelDef
             from ..components.user_component import UserComponentItem
             udef = UserCompDef(
                 type_name=entry.type_name,
@@ -118,6 +136,7 @@ def create_component_item(
                 symbol=[SymbolCmd(**s) for s in entry.symbol],
                 ref_label_offset=entry.ref_label_offset,
                 val_label_offset=entry.val_label_offset,
+                labels=[LabelDef(**lb) for lb in entry.labels],
             )
             return UserComponentItem(udef, ref=ref, value=value,
                                      params=params or {}, comp_id=comp_id,
@@ -613,10 +632,49 @@ class CircuitScene(QGraphicsScene):
     # Rebuild / apply
     # ------------------------------------------------------------------
 
+    def sync_to_circuit(self) -> None:
+        """Sync scene item positions/transforms back to the circuit model.
+
+        Call this before generating any netlist or XCIT output to capture
+        the current on-screen position of every component — including any
+        drag, rotate, or flip operations that happened since the component
+        was first placed (Issue 4).
+        """
+        idx: dict[str, dict] = {
+            c["id"]: c for c in self.circuit.components if "id" in c
+        }
+        for item in self.items():
+            if not isinstance(item, ComponentItem):
+                continue
+            cid = item.component_id
+            if cid not in idx:
+                continue
+            comp = idx[cid]
+            pos = item.pos()
+            comp["x"] = pos.x()
+            comp["y"] = pos.y()
+            comp["rotation"] = item.rotation()
+            comp["flip_h"] = item._flip_h_active
+            comp["flip_v"] = item._flip_v_active
+            comp["label_ref_pos"] = [
+                item._ref_label.pos().x(),
+                item._ref_label.pos().y(),
+            ]
+            comp["label_val_pos"] = [
+                item._val_label.pos().x(),
+                item._val_label.pos().y(),
+            ]
+
     def rebuild_from_circuit(self) -> None:
         """Clear and repopulate the scene from self.circuit."""
         for item in list(self.items()):
             self.removeItem(item)
+
+        # Detect old label-position format (pre-v2.0 project files wrote
+        # label positions in manually-rotated screen space rather than
+        # parent-local space).  Apply the inverse rotation so positions are
+        # correct with the new rendering approach.
+        label_format = getattr(self.circuit, "label_format", 2)
 
         for comp in self.circuit.components:
             item = create_component_item(
@@ -629,7 +687,8 @@ class CircuitScene(QGraphicsScene):
             )
             if item:
                 item.setPos(comp.get("x", 0), comp.get("y", 0))
-                item.setRotation(comp.get("rotation", 0))
+                rot = comp.get("rotation", 0)
+                item.setRotation(rot)
                 # Restore flip state
                 from PyQt6.QtGui import QTransform
                 fh = comp.get("flip_h", False)
@@ -641,12 +700,18 @@ class CircuitScene(QGraphicsScene):
                         0, 0, 1,
                     )
                     item.setTransform(t)
-                # Restore dragged label positions (if previously saved)
+                item._flip_h_active = fh
+                item._flip_v_active = fv
+                # Restore label positions, migrating from old format if needed
                 lrp = comp.get("label_ref_pos")
                 if lrp:
+                    if label_format < 2:
+                        lrp = _migrate_label_pos(lrp, rot)
                     item._ref_label.setPos(QPointF(lrp[0], lrp[1]))
                 lvp = comp.get("label_val_pos")
                 if lvp:
+                    if label_format < 2:
+                        lvp = _migrate_label_pos(lvp, rot)
                     item._val_label.setPos(QPointF(lvp[0], lvp[1]))
                 self.addItem(item)
 
@@ -691,8 +756,10 @@ class CircuitScene(QGraphicsScene):
         from ..io.xcit_netlist import parse_xcit_netlist
         from ..io.netlist_parser import layout_components
 
-        components, positions = parse_xcit_netlist(xcit_text)
+        components, positions, virtual_comps, label_format = parse_xcit_netlist(xcit_text)
         self.circuit.clear()
+        # Store format so rebuild_from_circuit uses the right label migration
+        self.circuit.label_format = label_format
 
         # Assign positions from layout section; fall back to auto-layout
         auto_positions = layout_components(components)
@@ -729,6 +796,24 @@ class CircuitScene(QGraphicsScene):
                 comp_dict["label_ref_pos"] = lrp
             if lvp:
                 comp_dict["label_val_pos"] = lvp
+            self.circuit.add_component(comp_dict)
+
+        # Issue 5: Restore virtual (non-SPICE) components from .xcit_virtual section
+        for vcomp in virtual_comps:
+            comp_id = str(uuid.uuid4())
+            comp_dict = {
+                "id": comp_id,
+                "type": vcomp["type"],
+                "library_id": vcomp.get("library_id"),
+                "ref": vcomp.get("ref", "V?"),
+                "value": "",
+                "params": {},
+                "x": vcomp.get("x", 0.0),
+                "y": vcomp.get("y", 0.0),
+                "rotation": vcomp.get("rotation", 0),
+                "flip_h": vcomp.get("flip_h", False),
+                "flip_v": vcomp.get("flip_v", False),
+            }
             self.circuit.add_component(comp_dict)
 
         # Wires are auto-generated on rebuild

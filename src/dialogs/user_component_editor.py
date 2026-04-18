@@ -6,6 +6,7 @@ from typing import Any
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -30,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..models.user_library import PinDef, SymbolCmd, UserCompDef
+from ..models.user_library import LabelDef, PinDef, SymbolCmd, UserCompDef
 from ..models.library_system import LibEntry, LibraryManager, PRESET_LIBRARY_ID
 from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
 
@@ -46,7 +47,8 @@ class _SymbolScene(QGraphicsScene):
         super().__init__()
         self.setSceneRect(QRectF(-200, -200, 400, 400))
         self.setBackgroundBrush(QColor("#f8f8f8"))
-        self._tool: str = "select"   # "select" | "line" | "rect" | "pin"
+        # tools: "select" | "line" | "rect" | "ellipse" | "pin"
+        self._tool: str = "select"
         self._line_start: QPointF | None = None
         self._temp_item: QGraphicsItem | None = None
         self.pins: list["_PinMarker"] = []
@@ -83,6 +85,7 @@ class _SymbolScene(QGraphicsScene):
             if self._line_start is None:
                 self._line_start = snapped
             else:
+                # Issue 3 fix: reset start to None (independent lines, not chains)
                 cmd = SymbolCmd("line",
                                 x1=self._line_start.x(), y1=self._line_start.y(),
                                 x2=snapped.x(), y2=snapped.y())
@@ -93,7 +96,7 @@ class _SymbolScene(QGraphicsScene):
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
-                self._line_start = snapped  # chain lines
+                self._line_start = None  # end line; don't chain
         elif self._tool == "rect":
             if self._line_start is None:
                 self._line_start = snapped
@@ -110,6 +113,24 @@ class _SymbolScene(QGraphicsScene):
                     self.removeItem(self._temp_item)
                     self._temp_item = None
                 self._line_start = None
+        elif self._tool == "ellipse":
+            if self._line_start is None:
+                self._line_start = snapped
+            else:
+                x1, y1 = self._line_start.x(), self._line_start.y()
+                x2, y2 = snapped.x(), snapped.y()
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                rx, ry = min(x1, x2), min(y1, y2)
+                # Store as ellipse cmd: x1/y1 = top-left, w/h = bounding rect dims
+                cmd = SymbolCmd("ellipse", x1=rx + w / 2, y1=ry + h / 2, w=w, h=h)
+                self.sym_cmds.append(cmd)
+                pen = QPen(QColor("#111111"), 2)
+                self.addEllipse(QRectF(rx, ry, w, h), pen,
+                                QBrush(Qt.BrushStyle.NoBrush))
+                if self._temp_item:
+                    self.removeItem(self._temp_item)
+                    self._temp_item = None
+                self._line_start = None
         else:
             super().mousePressEvent(event)
 
@@ -117,7 +138,8 @@ class _SymbolScene(QGraphicsScene):
         pos = event.scenePos()
         sx, sy = snap_to_grid(pos.x(), pos.y())
         snapped = QPointF(sx, sy)
-        if self._line_start is not None and self._tool in ("line", "rect"):
+        if self._line_start is not None and self._tool in ("line", "rect",
+                                                            "ellipse"):
             if self._temp_item:
                 self.removeItem(self._temp_item)
             pen = QPen(QColor("#2277ee"), 1, Qt.PenStyle.DashLine)
@@ -125,12 +147,19 @@ class _SymbolScene(QGraphicsScene):
                 self._temp_item = self.addLine(
                     self._line_start.x(), self._line_start.y(),
                     snapped.x(), snapped.y(), pen)
-            else:
+            elif self._tool == "rect":
                 x1, y1 = self._line_start.x(), self._line_start.y()
                 x2, y2 = snapped.x(), snapped.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addRect(
+                    QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
+            else:  # ellipse
+                x1, y1 = self._line_start.x(), self._line_start.y()
+                x2, y2 = snapped.x(), snapped.y()
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                rx, ry = min(x1, x2), min(y1, y2)
+                self._temp_item = self.addEllipse(
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
         super().mouseMoveEvent(event)
 
@@ -157,6 +186,12 @@ class _SymbolScene(QGraphicsScene):
             elif cmd.kind == "rect":
                 self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h),
                              pen, QBrush(Qt.BrushStyle.NoBrush))
+            elif cmd.kind == "ellipse":
+                # cmd.x1/y1 is the centre; cmd.w/h is the bounding rect size
+                rx, ry = cmd.w / 2, cmd.h / 2
+                self.addEllipse(
+                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h),
+                    pen, QBrush(Qt.BrushStyle.NoBrush))
         self.sym_cmds = list(udef.symbol)
         for p in udef.pins:
             marker = _PinMarker(QPointF(p.x, p.y), p.name)
@@ -195,7 +230,7 @@ class UserComponentEditorDialog(QDialog):
         self.setWindowTitle(
             "Edit Component" if existing else "Create Component"
         )
-        self.resize(900, 650)
+        self.resize(1000, 700)
         self._existing = existing
         self._library_id = library_id or PRESET_LIBRARY_ID
 
@@ -219,12 +254,17 @@ class UserComponentEditorDialog(QDialog):
         self._sym_view = QGraphicsView(self._sym_scene)
         self._sym_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._sym_view.setMinimumSize(400, 400)
+        # Issue 2: enable mouse tracking so real-time shape preview works even
+        # when no mouse button is held (i.e. after clicking the first point).
+        self._sym_view.setMouseTracking(True)
+        self._sym_view.viewport().setMouseTracking(True)
         left.addWidget(self._sym_view)
 
         # Tool buttons
         tool_row = QHBoxLayout()
         for label, tool in [("Select", "select"), ("Line", "line"),
-                             ("Rect", "rect"), ("Add Pin", "pin")]:
+                             ("Rect", "rect"), ("Ellipse", "ellipse"),
+                             ("Add Pin", "pin")]:
             btn = QPushButton(label)
             btn.clicked.connect(lambda checked, t=tool: self._sym_scene.set_tool(t))
             tool_row.addWidget(btn)
@@ -275,6 +315,29 @@ class UserComponentEditorDialog(QDialog):
         pin_layout.addWidget(refresh_btn)
 
         right.addWidget(pin_box)
+
+        # ── Issue 6: Extra labels section ─────────────────────────────
+        label_box = QGroupBox("Extra Labels (beyond Ref/Value)")
+        label_layout = QVBoxLayout(label_box)
+        self._label_list = QListWidget()
+        self._label_list.setToolTip(
+            "Extra labels attached to this component.\n"
+            "Each entry: <text>  [<side>  order=<n>]"
+        )
+        label_layout.addWidget(self._label_list)
+
+        label_btn_row = QHBoxLayout()
+        add_lbl_btn = QPushButton("Add Label…")
+        add_lbl_btn.clicked.connect(self._add_label)
+        edit_lbl_btn = QPushButton("Edit…")
+        edit_lbl_btn.clicked.connect(self._edit_label)
+        del_lbl_btn = QPushButton("Remove")
+        del_lbl_btn.clicked.connect(self._remove_label)
+        for b in (add_lbl_btn, edit_lbl_btn, del_lbl_btn):
+            label_btn_row.addWidget(b)
+        label_layout.addLayout(label_btn_row)
+
+        right.addWidget(label_box)
         right.addStretch()
 
         # OK / Cancel
@@ -285,6 +348,9 @@ class UserComponentEditorDialog(QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         right.addWidget(buttons)
+
+        # ── internal label data model ─────────────────────────────────
+        self._label_defs: list[LabelDef] = []
 
         # ── pre-fill if editing ───────────────────────────────────────
         if existing:
@@ -307,7 +373,43 @@ class UserComponentEditorDialog(QDialog):
                     symbol=[SymbolCmd(**s) for s in existing.symbol],
                 )
                 self._sym_scene.load_def(_sym_udef)
+            else:
+                # Issue 1: For built-in components, show actual rendered preview
+                self._load_builtin_preview(existing)
+            # Populate existing extra labels
+            for lbl_dict in existing.labels:
+                ldef = LabelDef(**lbl_dict) if isinstance(lbl_dict, dict) else lbl_dict
+                self._label_defs.append(ldef)
+            self._refresh_label_list()
             self._refresh_pin_list()
+
+    # ------------------------------------------------------------------
+    # Issue 1: built-in component preview
+    # ------------------------------------------------------------------
+
+    def _load_builtin_preview(self, entry: LibEntry) -> None:
+        """Show the actual rendered component in the symbol scene (read-only)."""
+        try:
+            from ..canvas.scene import create_component_item
+            item = create_component_item(
+                entry.type_name,
+                ref=entry.ref_prefix + "?",
+                value=entry.default_value,
+                library_id=PRESET_LIBRARY_ID,
+            )
+            if item is None:
+                return
+            # Make the preview non-interactive
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, False)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            item.setOpacity(0.85)
+            self._sym_scene.addItem(item)
+            # Centre the view on the item
+            self._sym_view.centerOn(item)
+        except Exception:
+            pass  # preview is best-effort
 
     # ------------------------------------------------------------------
 
@@ -329,6 +431,39 @@ class UserComponentEditorDialog(QDialog):
                     if isinstance(child, QGraphicsTextItem):
                         child.setPlainText(new_name.strip())
 
+    # ------------------------------------------------------------------
+    # Issue 6: Extra label management
+    # ------------------------------------------------------------------
+
+    def _refresh_label_list(self) -> None:
+        self._label_list.clear()
+        for ld in self._label_defs:
+            self._label_list.addItem(
+                f"{ld.text!r}  [{ld.side}  order={ld.order}]"
+            )
+
+    def _add_label(self) -> None:
+        dlg = _LabelEditDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._label_defs.append(dlg.label_def())
+            self._refresh_label_list()
+
+    def _edit_label(self) -> None:
+        row = self._label_list.currentRow()
+        if 0 <= row < len(self._label_defs):
+            dlg = _LabelEditDialog(self, self._label_defs[row])
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self._label_defs[row] = dlg.label_def()
+                self._refresh_label_list()
+
+    def _remove_label(self) -> None:
+        row = self._label_list.currentRow()
+        if 0 <= row < len(self._label_defs):
+            self._label_defs.pop(row)
+            self._refresh_label_list()
+
+    # ------------------------------------------------------------------
+
     def _on_accept(self) -> None:
         type_name = self._name_edit.text().strip()
         display = self._display_edit.text().strip() or type_name
@@ -349,6 +484,11 @@ class UserComponentEditorDialog(QDialog):
         if self._existing is not None:
             is_builtin = self._existing.is_builtin
 
+        labels_data = [
+            {"text": ld.text, "side": ld.side, "order": ld.order}
+            for ld in self._label_defs
+        ]
+
         entry = LibEntry(
             type_name=type_name,
             display_name=display,
@@ -360,12 +500,61 @@ class UserComponentEditorDialog(QDialog):
             pins=pins_pos if not is_builtin else [],
             symbol=[s.__dict__ for s in self._sym_scene.sym_cmds] if not is_builtin else [],
             is_builtin=is_builtin,
+            labels=labels_data,
         )
 
         lm = LibraryManager()
         lm.save_entry(self._library_id, entry)
 
         self.accept()
+
+
+# ---------------------------------------------------------------------------
+# Simple label-definition editor dialog (Issue 6)
+# ---------------------------------------------------------------------------
+
+class _LabelEditDialog(QDialog):
+    """Small dialog for adding or editing a LabelDef."""
+
+    def __init__(self, parent: QWidget | None = None,
+                 ldef: LabelDef | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Label Definition")
+        layout = QFormLayout(self)
+
+        self._text_edit = QLineEdit(ldef.text if ldef else "")
+        layout.addRow("Label text:", self._text_edit)
+
+        self._side_combo = QComboBox()
+        for s in ("top", "bottom", "left", "right"):
+            self._side_combo.addItem(s)
+        if ldef:
+            idx = self._side_combo.findText(ldef.side)
+            if idx >= 0:
+                self._side_combo.setCurrentIndex(idx)
+        layout.addRow("Side:", self._side_combo)
+
+        self._order_edit = QLineEdit(str(ldef.order) if ldef else "0")
+        layout.addRow("Order (0 = first):", self._order_edit)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def label_def(self) -> LabelDef:
+        try:
+            order = int(self._order_edit.text().strip())
+        except ValueError:
+            order = 0
+        return LabelDef(
+            text=self._text_edit.text().strip(),
+            side=self._side_combo.currentText(),
+            order=order,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -543,3 +732,4 @@ class LibraryManagerDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 UserLibraryManagerDialog = LibraryManagerDialog
+

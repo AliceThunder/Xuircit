@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 
 from ..models.circuit import Circuit
 
-_VERSION = "1.1"
+_VERSION = "2.0"
+# Label position format version:
+#   1 = pre-2.0: label offsets were manually rotated (screen-space).
+#   2 = 2.0+:    label offsets are in parent-local space (rotation-invariant).
+_LABEL_FORMAT = 2
 
 
 def save_project(circuit: Circuit, filepath: str) -> None:
@@ -18,6 +22,7 @@ def save_project(circuit: Circuit, filepath: str) -> None:
     """
     data = {
         "version": _VERSION,
+        "label_format": _LABEL_FORMAT,
         "created": datetime.now(timezone.utc).isoformat(),
         "components": circuit.components,
         # Wires are intentionally omitted; they are auto-drawn on load.
@@ -35,5 +40,7 @@ def load_project(filepath: str) -> Circuit:
     with open(filepath, encoding="utf-8") as fh:
         data = json.load(fh)
     circuit = Circuit()
+    # Set label format so scene can migrate old-format label positions.
+    circuit.label_format = int(data.get("label_format", 1))
     circuit.from_dict(data)
     return circuit

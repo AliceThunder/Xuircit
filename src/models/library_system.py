@@ -60,6 +60,9 @@ class LibEntry:
     is_builtin: bool = True
     ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
     val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
+    # Extra named labels (for user-defined components).
+    # Each item: {"text": str, "side": str, "order": int}
+    labels: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -80,6 +83,7 @@ class LibEntry:
             is_builtin=d.get("is_builtin", True),
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
+            labels=d.get("labels", []),
         )
 
 

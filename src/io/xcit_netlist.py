@@ -2,21 +2,25 @@
 
 Format overview
 ---------------
-The XCIT format extends a standard SPICE netlist with one optional section:
+The XCIT format extends a standard SPICE netlist with two optional sections:
 
   .xcit_layout
-      One line per component:
+      One line per SPICE component:
       ``ref  x  y  rotation  flip_h  flip_v  library_id
         label_ref_dx  label_ref_dy  label_val_dx  label_val_dy``
   .end_xcit_layout
 
-The section is placed between the last element line and the ``.end``
-directive.  A standard SPICE simulator will reject the section header as
-an unknown directive but will otherwise ignore it (most simulators skip
-unknown directives rather than aborting).
+  .xcit_virtual
+      One line per non-SPICE component (GND, ELBOW, TEE, NETLABEL, JUNCTION):
+      ``type_name  ref  x  y  rotation  flip_h  flip_v  library_id``
+  .end_xcit_virtual
+
+Both sections are placed before the ``.end`` directive.  A standard SPICE
+simulator will reject the section headers as unknown directives but will
+otherwise ignore them.
 
 Wires are NOT saved — they are automatically redrawn when the netlist is
-loaded.  Stripping the section with :func:`strip_positions` yields a
+loaded.  Stripping the sections with :func:`strip_positions` yields a
 valid SPICE netlist.
 """
 from __future__ import annotations
@@ -39,6 +43,11 @@ _TYPE_PREFIX: dict[str, str] = {
     "GND": "", "NETLABEL": "", "JUNCTION": "",
     "ELBOW": "", "TEE": "",
 }
+
+# Non-SPICE component types that should be saved in .xcit_virtual
+_VIRTUAL_TYPES: frozenset[str] = frozenset({
+    "GND", "NETLABEL", "JUNCTION", "ELBOW", "TEE",
+})
 
 _DEFAULT_NODES: dict[str, list[str]] = {
     "R":      ["N001", "N002"],
@@ -86,17 +95,18 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
 
     The output is a valid SPICE netlist with an embedded ``.xcit_layout``
     section that records each component's position, rotation, flip state,
-    and library reference.  Wire data is NOT included — wires are
-    auto-generated on load.
+    and library reference.  Non-SPICE components (ELBOW, TEE, GND, etc.)
+    are recorded in a ``.xcit_virtual`` section (Issue 5).
+
+    Wire data is NOT included — wires are auto-generated on load.
     """
     lines: list[str] = []
     lines.append("* Xuircit Extended Netlist (XCIT)")
     lines.append(
         f"* Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
-    lines.append(
-        "* Strip .xcit_layout section for standard SPICE."
-    )
+    lines.append("* Strip .xcit_layout section for standard SPICE.")
+    lines.append("* XCIT_LABEL_FORMAT 2")
     lines.append("")
 
     net_map = _build_net_map(circuit)
@@ -109,7 +119,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         ctype = comp.get("type", "R")
         prefix = _TYPE_PREFIX.get(ctype, "X")
         if not prefix:
-            continue
+            continue  # non-SPICE; handled in .xcit_virtual
 
         ref = comp.get("ref", "X1")
         value = comp.get("value", "1")
@@ -142,20 +152,23 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
 
     lines.append("")
 
-    # ── Layout section ───────────────────────────────────────────────────
+    # ── Layout section (SPICE components) ───────────────────────────────
     lines.append(".xcit_layout")
     lines.append(
         "* ref  x  y  rotation  flip_h  flip_v  library_id"
         "  label_ref_dx  label_ref_dy  label_val_dx  label_val_dy"
     )
     for comp in circuit.components:
+        ctype = comp.get("type", "R")
+        if ctype in _VIRTUAL_TYPES:
+            continue  # non-SPICE handled below
         ref = comp.get("ref", "X1")
         x = comp.get("x", 0.0)
         y = comp.get("y", 0.0)
         rot = comp.get("rotation", 0)
         fh = 1 if comp.get("flip_h", False) else 0
         fv = 1 if comp.get("flip_v", False) else 0
-        lib_id = comp.get("library_id", "preset")
+        lib_id = comp.get("library_id") or "preset"
         lrp = comp.get("label_ref_pos", [0.0, -22.0])
         lvp = comp.get("label_val_pos", [0.0, 14.0])
         lines.append(
@@ -165,12 +178,33 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
     lines.append(".end_xcit_layout")
     lines.append("")
 
+    # ── Virtual section (non-SPICE components: ELBOW, TEE, GND …) ────────
+    virtual_comps = [c for c in circuit.components
+                     if c.get("type", "") in _VIRTUAL_TYPES]
+    if virtual_comps:
+        lines.append(".xcit_virtual")
+        lines.append("* type_name  ref  x  y  rotation  flip_h  flip_v  library_id")
+        for comp in virtual_comps:
+            ctype = comp.get("type", "ELBOW")
+            ref = comp.get("ref", "V?")
+            x = comp.get("x", 0.0)
+            y = comp.get("y", 0.0)
+            rot = comp.get("rotation", 0)
+            fh = 1 if comp.get("flip_h", False) else 0
+            fv = 1 if comp.get("flip_v", False) else 0
+            lib_id = comp.get("library_id") or "preset"
+            lines.append(
+                f"{ctype}  {ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}"
+            )
+        lines.append(".end_xcit_virtual")
+        lines.append("")
+
     lines.append(".end")
     return "\n".join(lines)
 
 
 def strip_positions(xcit_text: str) -> str:
-    """Remove the .xcit_layout section from an XCIT netlist.
+    """Remove the .xcit_layout and .xcit_virtual sections from an XCIT netlist.
 
     Returns a standard SPICE netlist string that any simulator can parse.
     """
@@ -178,10 +212,10 @@ def strip_positions(xcit_text: str) -> str:
     result: list[str] = []
     for line in xcit_text.splitlines():
         stripped = line.strip().lower()
-        if stripped in (".xcit_layout", ".xcit_wires"):
+        if stripped in (".xcit_layout", ".xcit_wires", ".xcit_virtual"):
             in_section = True
             continue
-        if stripped in (".end_xcit_layout", ".end_xcit_wires"):
+        if stripped in (".end_xcit_layout", ".end_xcit_wires", ".end_xcit_virtual"):
             in_section = False
             continue
         if not in_section:
@@ -200,13 +234,15 @@ def strip_positions(xcit_text: str) -> str:
 
 def parse_xcit_netlist(
     text: str,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]], int]:
     """Parse an XCIT netlist.
 
-    Returns a 2-tuple:
-    - ``components``: list of component dicts (from netlist_parser.parse_netlist)
+    Returns a 4-tuple:
+    - ``components``: list of SPICE component dicts
     - ``positions``: mapping ref → position dict
       ``{x, y, rotation, flip_h, flip_v, library_id, label_ref_pos, label_val_pos}``
+    - ``virtual_comps``: list of non-SPICE component dicts (ELBOW, TEE, GND, …)
+    - ``label_format``: integer (1 = old screen-space, 2 = parent-local)
 
     Wire data is not returned — wires are auto-generated on rebuild.
     """
@@ -214,14 +250,30 @@ def parse_xcit_netlist(
 
     spice_lines: list[str] = []
     layout_lines: list[str] = []
+    virtual_lines: list[str] = []
+    label_format = 1  # assume old format unless the file says otherwise
     state = "spice"
 
     for line in text.splitlines():
-        stripped = line.strip().lower()
+        raw_stripped = line.strip()
+        stripped = raw_stripped.lower()
+        # Check for label format comment (must test raw line, not lowercased)
+        if raw_stripped.startswith("* XCIT_LABEL_FORMAT"):
+            try:
+                label_format = int(raw_stripped.split()[-1])
+            except (ValueError, IndexError):
+                pass
+            continue
         if stripped in (".xcit_layout",):
             state = "layout"
             continue
         if stripped in (".end_xcit_layout",):
+            state = "spice"
+            continue
+        if stripped in (".xcit_virtual",):
+            state = "virtual"
+            continue
+        if stripped in (".end_xcit_virtual",):
             state = "spice"
             continue
         # Skip legacy wire sections silently
@@ -235,6 +287,8 @@ def parse_xcit_netlist(
             spice_lines.append(line)
         elif state == "layout":
             layout_lines.append(line)
+        elif state == "virtual":
+            virtual_lines.append(line)
 
     components = parse_netlist("\n".join(spice_lines))
 
@@ -274,7 +328,38 @@ def parse_xcit_netlist(
             "label_val_pos": lvp,
         }
 
-    return components, positions
+    # Parse .xcit_virtual section (Issue 5)
+    virtual_comps: list[dict[str, Any]] = []
+    for line in virtual_lines:
+        line = line.strip()
+        if not line or line.startswith("*"):
+            continue
+        parts = line.split()
+        # format: type_name  ref  x  y  rotation  flip_h  flip_v  [library_id]
+        if len(parts) < 7:
+            continue
+        try:
+            vtype = parts[0]
+            vref = parts[1]
+            vx, vy = float(parts[2]), float(parts[3])
+            vrot = float(parts[4])
+            vfh = bool(int(parts[5]))
+            vfv = bool(int(parts[6]))
+            vlib = parts[7] if len(parts) > 7 else "preset"
+        except (ValueError, IndexError):
+            continue
+        virtual_comps.append({
+            "type": vtype,
+            "ref": vref,
+            "x": vx,
+            "y": vy,
+            "rotation": vrot,
+            "flip_h": vfh,
+            "flip_v": vfv,
+            "library_id": vlib,
+        })
+
+    return components, positions, virtual_comps, label_format
 
 
 def _is_float(s: str) -> bool:

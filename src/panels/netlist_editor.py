@@ -139,6 +139,7 @@ class NetlistEditor(QDockWidget):
         from ..io.netlist_generator import generate_netlist
         if not isinstance(self._scene, CircuitScene):
             return
+        self._scene.sync_to_circuit()  # Issue 4: capture current positions
         text = generate_netlist(self._scene.circuit)
         self._editor.setPlainText(text)
 
@@ -147,6 +148,7 @@ class NetlistEditor(QDockWidget):
         from ..io.xcit_netlist import generate_xcit_netlist
         if not isinstance(self._scene, CircuitScene):
             return
+        self._scene.sync_to_circuit()  # Issue 4: capture current positions
         text = generate_xcit_netlist(self._scene.circuit)
         self._editor.setPlainText(text)
 
