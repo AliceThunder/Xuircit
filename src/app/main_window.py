@@ -4,6 +4,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence, QUndoStack
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -11,6 +12,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QToolBar,
+    QWidget,
 )
 
 from ..canvas.scene import CircuitScene, SceneMode
@@ -204,11 +206,20 @@ class MainWindow(QMainWindow):
         for act in (self._act_undo, self._act_redo):
             tb.addAction(act)
         tb.addSeparator()
-        # Bug 1 fix: wire mode removed from toolbar
         tb.addAction(self._act_select_mode)
         tb.addSeparator()
         for act in (self._act_zoom_in, self._act_zoom_out, self._act_fit):
             tb.addAction(act)
+        tb.addSeparator()
+        # Issue 8: label-dragging toggle switch
+        self._lbl_drag_cb = QCheckBox("Label Drag")
+        self._lbl_drag_cb.setChecked(True)
+        self._lbl_drag_cb.setToolTip(
+            "Enable / disable dragging of component labels.\n"
+            "Uncheck to prevent accidental label moves."
+        )
+        self._lbl_drag_cb.toggled.connect(self._on_label_drag_toggled)
+        tb.addWidget(self._lbl_drag_cb)
 
     # ------------------------------------------------------------------
     # Signals
@@ -251,9 +262,16 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self, mode_name: str) -> None:
         self._status_mode.setText(f"Mode: {mode_name}")
         self._act_select_mode.setChecked(mode_name == "SELECT")
+        # Issue 9: only allow rubber-band selection in SELECT mode
+        self._view.set_select_mode(mode_name == "SELECT")
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self._status_zoom.setText(f"Zoom: {zoom * 100:.0f}%")
+
+    def _on_label_drag_toggled(self, enabled: bool) -> None:
+        """Issue 8: toggle label dragging globally."""
+        from ..components.base import LabelItem
+        LabelItem.set_dragging_enabled(enabled)
 
     # ------------------------------------------------------------------
     # File operations

@@ -1,13 +1,22 @@
 """CircuitView — QGraphicsView with zoom and pan."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QWheelEvent
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsView
 
 
 class CircuitView(QGraphicsView):
-    """Zoomable, pannable view of the circuit canvas."""
+    """Zoomable, pannable view of the circuit canvas.
+
+    Issue 1: Drag-and-drop component placement has been removed.
+             Components are placed via single-click in the palette.
+    Issue 9: Rubber-band selection is only active in SELECT mode.
+             Call set_select_mode(True) / set_select_mode(False) from
+             the main window when the scene mode changes.
+    Issue 10: Shift+scroll wheel scrolls the canvas horizontally instead
+              of vertically.
+    """
 
     zoom_changed = pyqtSignal(float)
 
@@ -21,6 +30,7 @@ class CircuitView(QGraphicsView):
             QPainter.RenderHint.Antialiasing |
             QPainter.RenderHint.TextAntialiasing
         )
+        # Issue 9: start in SELECT mode (rubber-band active)
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setTransformationAnchor(
             QGraphicsView.ViewportAnchor.AnchorUnderMouse
@@ -32,22 +42,42 @@ class CircuitView(QGraphicsView):
         self._panning = False
         self._pan_start_x = 0
         self._pan_start_y = 0
-        # Accept external drag-and-drop from the component palette (Issue 2)
-        self.setAcceptDrops(True)
+        # Issue 1: no drag-and-drop from palette
+        self.setAcceptDrops(False)
+
+    # ------------------------------------------------------------------
+    # Issue 9: mode-aware drag control
+    # ------------------------------------------------------------------
+
+    def set_select_mode(self, active: bool) -> None:
+        """Enable rubber-band selection when in SELECT mode; disable otherwise."""
+        if active:
+            self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
 
     # ------------------------------------------------------------------
     # Zoom
     # ------------------------------------------------------------------
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            # Ctrl+scroll: zoom
             delta = event.angleDelta().y()
             if delta > 0:
                 self._apply_zoom(self._ZOOM_FACTOR)
             else:
                 self._apply_zoom(1.0 / self._ZOOM_FACTOR)
             event.accept()
+        elif mods & Qt.KeyboardModifier.ShiftModifier:
+            # Issue 10: Shift+scroll: pan horizontally
+            delta = event.angleDelta().y()
+            sb = self.horizontalScrollBar()
+            sb.setValue(sb.value() - delta // 2)
+            event.accept()
         else:
+            # Plain scroll: pan vertically (Qt default behaviour)
             super().wheelEvent(event)
 
     def _apply_zoom(self, factor: float) -> None:
@@ -115,78 +145,3 @@ class CircuitView(QGraphicsView):
             return
         super().mouseReleaseEvent(event)  # type: ignore[arg-type]
 
-    # ------------------------------------------------------------------
-    # Drag-and-drop from component palette (Issue 2)
-    # ------------------------------------------------------------------
-
-    _PALETTE_MIME = "application/x-xuircit-component"
-
-    def dragEnterEvent(self, event: object) -> None:
-        from PyQt6.QtGui import QDragEnterEvent
-        if isinstance(event, QDragEnterEvent) and event.mimeData().hasFormat(
-            self._PALETTE_MIME
-        ):
-            comp_type = (
-                event.mimeData().data(self._PALETTE_MIME).data().decode("utf-8")
-            )
-            scene = self.scene()
-            # Bug 1 fix: switch to PLACE_COMPONENT mode so R/F/V shortcuts work
-            if hasattr(scene, "set_mode") and hasattr(scene, "SceneMode"):
-                pass  # SceneMode is module-level; import directly
-            if hasattr(scene, "set_pending_component"):
-                from ..canvas.scene import SceneMode
-                if hasattr(scene, "set_mode"):
-                    scene.set_mode(SceneMode.PLACE_COMPONENT)  # type: ignore[union-attr]
-            # Create a ghost preview if one is not already showing
-            if (
-                hasattr(scene, "set_pending_component")
-                and hasattr(scene, "_ghost")
-                and scene._ghost is None  # type: ignore[union-attr]
-            ):
-                scene.set_pending_component(comp_type)  # type: ignore[union-attr]
-            # Bug 1 / Bug 2 fix: take keyboard focus so R/F/V reach the scene
-            self.setFocus(Qt.FocusReason.OtherFocusReason)
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)  # type: ignore[arg-type]
-
-    def dragMoveEvent(self, event: object) -> None:
-        from PyQt6.QtGui import QDragMoveEvent
-        if isinstance(event, QDragMoveEvent) and event.mimeData().hasFormat(
-            self._PALETTE_MIME
-        ):
-            scene = self.scene()
-            if hasattr(scene, "_ghost") and scene._ghost is not None:  # type: ignore[union-attr]
-                from ..canvas.grid import snap_to_grid
-                view_pos = event.position().toPoint()
-                sp = self.mapToScene(view_pos)
-                sx, sy = snap_to_grid(sp.x(), sp.y())
-                scene._ghost.setPos(QPointF(sx, sy))  # type: ignore[union-attr]
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)  # type: ignore[arg-type]
-
-    def dragLeaveEvent(self, event: object) -> None:
-        scene = self.scene()
-        if hasattr(scene, "_clear_ghost"):
-            scene._clear_ghost()  # type: ignore[union-attr]
-        super().dragLeaveEvent(event)  # type: ignore[arg-type]
-
-    def dropEvent(self, event: object) -> None:
-        from PyQt6.QtGui import QDropEvent
-        if isinstance(event, QDropEvent) and event.mimeData().hasFormat(
-            self._PALETTE_MIME
-        ):
-            scene = self.scene()
-            from ..canvas.grid import snap_to_grid
-            view_pos = event.position().toPoint()
-            sp = self.mapToScene(view_pos)
-            sx, sy = snap_to_grid(sp.x(), sp.y())
-            if hasattr(scene, "_place_component") and hasattr(scene, "_pending_type"):
-                if scene._pending_type:  # type: ignore[union-attr]
-                    scene._place_component(QPointF(sx, sy))  # type: ignore[union-attr]
-            if hasattr(scene, "_clear_ghost"):
-                scene._clear_ghost()  # type: ignore[union-attr]
-            event.acceptProposedAction()
-        else:
-            super().dropEvent(event)  # type: ignore[arg-type]

@@ -57,15 +57,26 @@ class LabelItem(QGraphicsSimpleTextItem):
     """A draggable text label attached to a component.
 
     Without ``ItemIgnoresTransformations`` the label scales with the canvas
-    zoom just like the component body (Issue 7).  The label's ``pos()`` is in
+    zoom just like the component body.  The label's ``pos()`` is in
     the parent component's *local* coordinate space, so it naturally moves to
-    the correct side when the parent is rotated or flipped (Issue 6).
+    the correct side when the parent is rotated or flipped.
 
     The ``paint()`` override counter-rotates and counter-flips the text so it
     always appears upright regardless of the parent's orientation.  Text
     alignment (left / right / centre) is inferred automatically from the
     label's scene position relative to the parent component.
+
+    Issue 8: Class-level flag ``_dragging_enabled`` controls whether labels
+    can be dragged independently.  Use ``LabelItem.set_dragging_enabled()``
+    to toggle from the main window.
     """
+
+    # Issue 8: globally enable/disable label dragging
+    _dragging_enabled: bool = True
+
+    @classmethod
+    def set_dragging_enabled(cls, enabled: bool) -> None:
+        cls._dragging_enabled = enabled
 
     def __init__(self, text: str, parent: "ComponentItem") -> None:
         super().__init__(text, parent)
@@ -74,6 +85,7 @@ class LabelItem(QGraphicsSimpleTextItem):
         self.setBrush(QBrush(QColor("#333333")))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         # NOTE: ItemIgnoresTransformations is intentionally NOT set so the
         # label scales with the view zoom like the component body.
         self.setZValue(5)
@@ -81,13 +93,28 @@ class LabelItem(QGraphicsSimpleTextItem):
     def boundingRect(self) -> QRectF:
         """Return a conservative bounding rect centred on the item's origin.
 
-        The rect is made generous enough to cover the text in all alignment
-        modes (left / right / centre) without the need to know the current
-        rotation.
+        Issue 3 & 4: The rect must cover the text in ALL orientations
+        (any parent rotation + reflection) so that:
+          * the hit-test area always overlaps the visible text, and
+          * the repaint region always clears the old text position.
+
+        The text is painted after a counter-rotation whose magnitude can be
+        up to 360 degrees.  In the worst case a label of size (w x h) can
+        appear up to sqrt(w^2+h^2) pixels from the item origin.
         """
+        import math
         br = super().boundingRect()
         w, h = br.width(), br.height()
-        return QRectF(-w, -h, 2 * w, 2 * h)
+        r = math.sqrt(w * w + h * h) + 6.0
+        return QRectF(-r, -r, 2 * r, 2 * r)
+
+    def shape(self):
+        """Issue 3: return a shape covering the full boundingRect so the
+        entire text area is hittable regardless of the parent's orientation."""
+        from PyQt6.QtGui import QPainterPath
+        path = QPainterPath()
+        path.addRect(self.boundingRect())
+        return path
 
     def paint(
         self,
@@ -102,8 +129,8 @@ class LabelItem(QGraphicsSimpleTextItem):
         det = wt.m11() * wt.m22() - wt.m12() * wt.m21()
         has_reflection = det < 0
         # Rotation angle of the item in device space (degrees, CW positive).
-        # When a reflection is present, atan2(m12, m11) returns θ + 180° instead
-        # of the true visual rotation θ.  Negate both arguments to recover θ.
+        # When a reflection is present, atan2(m12, m11) returns theta + 180 instead
+        # of the true visual rotation theta.  Negate both arguments to recover theta.
         if has_reflection:
             angle_deg = math.degrees(math.atan2(-wt.m12(), -wt.m11()))
         else:
@@ -112,10 +139,10 @@ class LabelItem(QGraphicsSimpleTextItem):
         br_text = QGraphicsSimpleTextItem.boundingRect(self)
         w, h = br_text.width(), br_text.height()
 
-        # ── Determine text alignment from scene position ──────────────
-        # Left side  → right-align (text ends at anchor)  ax = -w
-        # Right side → left-align  (text starts at anchor) ax = 0
-        # Top/Bottom → left-align per spec                  ax = 0
+        # Determine text alignment from scene position.
+        # Left side  -> right-align (text ends at anchor)  ax = -w
+        # Right side -> left-align  (text starts at anchor) ax = 0
+        # Top/Bottom -> left-align per spec                  ax = 0
         ax: float = 0.0  # default: left-align
         parent = self.parentItem()
         if parent is not None:
@@ -125,7 +152,7 @@ class LabelItem(QGraphicsSimpleTextItem):
             dy = lsp.y() - psp.y()
             if abs(dx) >= abs(dy):
                 ax = -w if dx < 0 else 0.0
-            # else: top/bottom → ax stays 0 (left-align)
+            # else: top/bottom -> ax stays 0 (left-align)
 
         painter.save()
         # Counter-rotate so the text is always upright.
@@ -139,6 +166,37 @@ class LabelItem(QGraphicsSimpleTextItem):
         painter.translate(ax, -h / 2)
         QGraphicsSimpleTextItem.paint(self, painter, option, widget)
         painter.restore()
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        """Issue 4: force scene repaint when position changes to avoid trail."""
+        if change in (
+            QGraphicsItem.GraphicsItemChange.ItemPositionChange,
+            QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged,
+        ):
+            scene = self.scene()
+            if scene is not None:
+                # Invalidate a generous area so old selection borders are erased.
+                scene.update(scene.sceneRect())
+        return super().itemChange(change, value)
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Issue 2: prevent independent label drag during batch selection.
+        Issue 8: respect the global label-dragging switch."""
+        if not LabelItem._dragging_enabled:
+            event.ignore()
+            return
+        # If multiple components are selected, let the parent component
+        # handle the drag so the whole group moves together.
+        scene = self.scene()
+        if scene is not None:
+            multi = sum(
+                1 for it in scene.selectedItems()
+                if isinstance(it, ComponentItem)
+            )
+            if multi > 1:
+                event.ignore()
+                return
+        super().mousePressEvent(event)
 
 
 class ComponentItem(QGraphicsItem):
@@ -173,6 +231,10 @@ class ComponentItem(QGraphicsItem):
         self.component_id: str = comp_id or str(uuid.uuid4())
         self.library_id: str | None = library_id
 
+        # Issue 14: per-instance label visibility flags
+        self._ref_visible: bool = True
+        self._val_visible: bool = True
+
         # We implement dragging manually so we can enforce a drag threshold.
         # ItemIsMovable is intentionally NOT set.
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -194,11 +256,13 @@ class ComponentItem(QGraphicsItem):
         # Draggable, always-upright labels
         self._ref_label = LabelItem(self.ref, self)
         self._ref_label.setPos(QPointF(*self._ref_label_offset))
-        self._ref_label.setVisible(self._show_ref_label)
+        self._ref_label.setVisible(self._show_ref_label and self._ref_visible)
 
         self._val_label = LabelItem(self.value, self)
         self._val_label.setPos(QPointF(*self._val_label_offset))
-        self._val_label.setVisible(bool(self.value) and self._show_val_label)
+        self._val_label.setVisible(
+            bool(self.value) and self._show_val_label and self._val_visible
+        )
 
     # ------------------------------------------------------------------
     # Override in subclasses
@@ -236,11 +300,13 @@ class ComponentItem(QGraphicsItem):
     # ------------------------------------------------------------------
 
     def _refresh_labels(self) -> None:
-        """Sync label text with current ref/value fields."""
+        """Sync label text and visibility with current ref/value/flags."""
         self._ref_label.setText(self.ref)
-        self._ref_label.setVisible(self._show_ref_label)
+        self._ref_label.setVisible(self._show_ref_label and self._ref_visible)
         self._val_label.setText(self.value)
-        self._val_label.setVisible(bool(self.value) and self._show_val_label)
+        self._val_label.setVisible(
+            bool(self.value) and self._show_val_label and self._val_visible
+        )
 
     # ------------------------------------------------------------------
     # QGraphicsItem interface
@@ -487,6 +553,8 @@ class ComponentItem(QGraphicsItem):
                                self._ref_label.pos().y()],
             "label_val_pos": [self._val_label.pos().x(),
                                self._val_label.pos().y()],
+            "ref_visible": self._ref_visible,
+            "val_visible": self._val_visible,
         }
         if self.library_id is not None:
             d["library_id"] = self.library_id
