@@ -1286,6 +1286,7 @@ class CircuitScene(QGraphicsScene):
 
         changed = False
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            from ..canvas.annotation import AnnotationItem, TextAnnotationItem
             selected_comps = [
                 it for it in self.selectedItems()
                 if isinstance(it, ComponentItem)
@@ -1294,7 +1295,11 @@ class CircuitScene(QGraphicsScene):
                 it for it in self.selectedItems()
                 if isinstance(it, WireItem)
             ]
-            if selected_comps or selected_wires:
+            selected_annos = [
+                it for it in self.selectedItems()
+                if isinstance(it, (AnnotationItem, TextAnnotationItem))
+            ]
+            if selected_comps or selected_wires or selected_annos:
                 before = self._take_snapshot()
                 for item in selected_comps:
                     self.circuit.remove_component(item.component_id)
@@ -1302,6 +1307,9 @@ class CircuitScene(QGraphicsScene):
                     changed = True
                 for item in selected_wires:
                     self.circuit.remove_wire(item.wire_id)
+                    self.removeItem(item)
+                for item in selected_annos:
+                    self.circuit.remove_annotation(item.anno_id)
                     self.removeItem(item)
                 if changed:
                     self._rebuild_auto_wires()
