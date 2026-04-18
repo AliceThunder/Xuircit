@@ -78,6 +78,8 @@ class LayersPanel(QDockWidget):
             ("⬭ Ellipse",  "ellipse",  "Draw an ellipse (drag bounding box)"),
             ("▭ Rect",     "rect",     "Draw a rectangle annotation"),
             ("⌇ Polyline", "polyline", "Draw a polyline (right-click to finish)"),
+            # Fix 10: text annotation tool
+            ("✎ Text",     "text",     "Place a text annotation (click to place)"),
         ]
         for label, tool_name, tooltip in tools:
             rb = QRadioButton(label)
@@ -100,6 +102,14 @@ class LayersPanel(QDockWidget):
     def _on_tool(self, checked: bool, tool: str) -> None:
         if checked:
             self.annotation_tool_selected.emit(tool)
+
+    def reset_annotation_tool(self) -> None:
+        """Fix 9: Reset to 'Select' tool (called when ESC is pressed)."""
+        first = self._tool_group.buttons()[0]
+        if not first.isChecked():
+            first.setChecked(True)
+            # Emit directly in case signal doesn't fire (already checked)
+            self.annotation_tool_selected.emit("select")
 
     def set_component_layer_visible(self, visible: bool) -> None:
         self._comp_layer_cb.setChecked(visible)

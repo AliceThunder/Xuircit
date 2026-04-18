@@ -63,6 +63,9 @@ class LibEntry:
     # Extra named labels (for user-defined components).
     # Each item: {"text": str, "side": str, "order": int, "default_value": str}
     labels: list[dict] = field(default_factory=list)
+    # Fix 3: True ⟹ component is a virtual (non-SPICE) wiring helper.
+    # Virtual components are saved in .xcit_virtual rather than as SPICE elements.
+    is_virtual: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -84,6 +87,7 @@ class LibEntry:
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
             labels=d.get("labels", []),
+            is_virtual=d.get("is_virtual", False),
         )
 
 
@@ -169,18 +173,14 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def _init(self) -> None:
-        """Load or create the preset library, then load user libraries."""
-        preset_file = _LIBRARIES_DIR / f"{PRESET_LIBRARY_ID}.json"
-        if preset_file.exists():
-            try:
-                with open(preset_file, encoding="utf-8") as fh:
-                    data = json.load(fh)
-                preset = CompLibrary.from_dict(data)
-            except Exception:
-                preset = self._build_preset()
-        else:
-            preset = self._build_preset()
+        """Always build the preset library from hardcoded defaults.
 
+        Fix 2: The preset library is never loaded from or saved to disk.
+        This guarantees the preset always contains correct, consistent
+        component definitions.  User modifications should be made in
+        user-created libraries instead.
+        """
+        preset = self._build_preset()
         self._libraries = [preset]
 
         # Load other user libraries
@@ -423,6 +423,10 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def _save_library(self, lib: CompLibrary) -> None:
+        # Fix 2: Never save the preset library to disk; it is always rebuilt
+        # from hardcoded defaults on startup.
+        if lib.library_id == PRESET_LIBRARY_ID:
+            return
         try:
             _LIBRARIES_DIR.mkdir(parents=True, exist_ok=True)
             path = _LIBRARIES_DIR / f"{lib.library_id}.json"

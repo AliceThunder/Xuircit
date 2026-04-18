@@ -77,6 +77,10 @@ class MainWindow(QMainWindow):
         # Feature #2: apply saved font settings to labels
         self._apply_font_settings()
 
+        # Fix 5: ensure Label Drag starts disabled (matching the checkbox default)
+        from ..components.base import LabelItem
+        LabelItem.set_dragging_enabled(False)
+
     def _apply_font_settings(self) -> None:
         """Feature #2: apply saved font/size settings to LabelItem."""
         from ..app.settings import AppSettings
@@ -238,9 +242,9 @@ class MainWindow(QMainWindow):
         for act in (self._act_zoom_in, self._act_zoom_out, self._act_fit):
             tb.addAction(act)
         tb.addSeparator()
-        # Issue 8: label-dragging toggle switch
+        # Fix 5: label-dragging toggle switch — default is OFF
         self._lbl_drag_cb = QCheckBox("Label Drag")
-        self._lbl_drag_cb.setChecked(True)
+        self._lbl_drag_cb.setChecked(False)
         self._lbl_drag_cb.setToolTip(
             "Enable / disable dragging of component labels.\n"
             "Uncheck to prevent accidental label moves."
@@ -266,6 +270,9 @@ class MainWindow(QMainWindow):
             self._scene.set_annotation_layer_visible)
         self._layers_panel.annotation_tool_selected.connect(
             self._on_annotation_tool_selected)
+        # Fix 9: reset annotation tool to select when ESC is pressed
+        self._scene.annotation_tool_reset.connect(
+            self._layers_panel.reset_annotation_tool)
 
     # ------------------------------------------------------------------
     # Slots
@@ -298,14 +305,24 @@ class MainWindow(QMainWindow):
         self._act_select_mode.setChecked(mode_name == "SELECT")
         # Issue 9: only allow rubber-band selection in SELECT mode
         self._view.set_select_mode(mode_name == "SELECT")
+        # Fix 7: update cursor based on mode
+        from PyQt6.QtCore import Qt as Qt_
+        if mode_name == "SELECT":
+            self._view.viewport().setCursor(Qt_.CursorShape.ArrowCursor)
+        else:
+            self._view.viewport().setCursor(Qt_.CursorShape.CrossCursor)
 
     def _on_annotation_tool_selected(self, tool: str) -> None:
         """Feature #6: switch scene to the selected annotation drawing tool."""
         self._scene.set_annotation_tool(tool)
+        # Fix 7: update cursor for annotation mode
+        from PyQt6.QtCore import Qt as Qt_
         if tool == "select":
             self._status_mode.setText("Mode: SELECT")
+            self._view.viewport().setCursor(Qt_.CursorShape.ArrowCursor)
         else:
             self._status_mode.setText(f"Mode: ANNOTATE ({tool})")
+            self._view.viewport().setCursor(Qt_.CursorShape.CrossCursor)
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self._status_zoom.setText(f"Zoom: {zoom * 100:.0f}%")
@@ -455,21 +472,32 @@ class MainWindow(QMainWindow):
 
     def _rotate_selected_cw(self) -> None:
         changed = False
-        for item in self._scene.selectedItems():
-            if isinstance(item, ComponentItem):
+        targets = [i for i in self._scene.selectedItems() if isinstance(i, ComponentItem)]
+        if targets:
+            before = self._scene._take_snapshot()
+            for item in targets:
                 item._rotate_cw()
                 changed = True
-        # Wire rebuild is triggered by ComponentItem._rotate_cw via _notify_scene_changed
+            after = self._scene._take_snapshot()
+            self._scene._push_undo("Rotate CW", before, after)
 
     def _flip_selected_h(self) -> None:
-        for item in self._scene.selectedItems():
-            if isinstance(item, ComponentItem):
+        targets = [i for i in self._scene.selectedItems() if isinstance(i, ComponentItem)]
+        if targets:
+            before = self._scene._take_snapshot()
+            for item in targets:
                 item._flip_h()
+            after = self._scene._take_snapshot()
+            self._scene._push_undo("Flip Horizontal", before, after)
 
     def _flip_selected_v(self) -> None:
-        for item in self._scene.selectedItems():
-            if isinstance(item, ComponentItem):
+        targets = [i for i in self._scene.selectedItems() if isinstance(i, ComponentItem)]
+        if targets:
+            before = self._scene._take_snapshot()
+            for item in targets:
                 item._flip_v()
+            after = self._scene._take_snapshot()
+            self._scene._push_undo("Flip Vertical", before, after)
 
     # ------------------------------------------------------------------
     # Library

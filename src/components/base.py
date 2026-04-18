@@ -78,8 +78,8 @@ class LabelItem(QGraphicsSimpleTextItem):
     to be changed application-wide (Feature #2).
     """
 
-    # Issue 8: globally enable/disable label dragging
-    _dragging_enabled: bool = True
+    # Fix 5: globally enable/disable label dragging — default OFF
+    _dragging_enabled: bool = False
 
     # Feature #2: class-level default font for all labels
     _label_font: QFont = QFont("monospace", 8)
@@ -201,7 +201,12 @@ class LabelItem(QGraphicsSimpleTextItem):
         painter.restore()
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        """Issue 4: force scene repaint when position changes to avoid trail."""
+        """Issue 4: force scene repaint when position changes to avoid trail.
+        Fix 4: prevent rubber-band selection when label dragging is disabled."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            # Fix 4: When label drag is disabled, labels should not be selectable
+            if not LabelItem._dragging_enabled:
+                return False
         if change in (
             QGraphicsItem.GraphicsItemChange.ItemPositionChange,
             QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged,
@@ -632,10 +637,20 @@ def _open_properties(item: "ComponentItem") -> None:
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
     if dlg.exec() == QDialog.DialogCode.Accepted:
+        # Fix 6: capture before-state for undo
+        scene = item.scene() if callable(getattr(item, "scene", None)) else None
+        before = None
+        if scene is not None and hasattr(scene, "_take_snapshot") and \
+                hasattr(scene, "undo_stack") and scene.undo_stack is not None:
+            before = scene._take_snapshot()
         item.ref = ref_edit.text().strip()
         item.value = val_edit.text().strip()
         item._refresh_labels()
         item.update()
+        if before is not None and scene is not None and \
+                hasattr(scene, "_push_undo") and hasattr(scene, "_take_snapshot"):
+            after = scene._take_snapshot()
+            scene._push_undo("Edit Properties", before, after)
 
 
 # ------------------------------------------------------------------
