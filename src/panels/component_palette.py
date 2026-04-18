@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QDrag
-from PyQt6.QtCore import QMimeData
 from PyQt6.QtWidgets import (
     QDockWidget,
-    QLabel,
     QLineEdit,
     QPushButton,
     QTreeWidget,
@@ -19,30 +16,11 @@ from PyQt6.QtWidgets import (
 from ..models.library_system import LibraryManager
 
 
-class _DraggableTree(QTreeWidget):
-    """QTreeWidget that initiates a drag carrying the component type string."""
-
-    def startDrag(self, supported_actions: Qt.DropAction) -> None:  # type: ignore[override]
-        item = self.currentItem()
-        if item is None:
-            return
-        comp_type: str | None = item.data(0, Qt.ItemDataRole.UserRole)
-        if not comp_type:
-            return
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(
-            "application/x-xuircit-component", comp_type.encode("utf-8")
-        )
-        drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
-
-
 class ComponentPalette(QDockWidget):
     """Left dock: categorized list of components with search.
 
-    Components are grouped first by library, then by category within
-    each library.
+    Issue 1: components are placed by single-clicking the item (no drag-and-drop).
+    Components are grouped first by library, then by category within each library.
     """
 
     place_requested = pyqtSignal(str)  # emits comp_type
@@ -65,19 +43,15 @@ class ComponentPalette(QDockWidget):
         self._search.textChanged.connect(self._on_search)
         layout.addWidget(self._search)
 
-        # Tree
-        self._tree = _DraggableTree()
+        # Tree (Issue 1: single-click selects; no drag-and-drop)
+        self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
-        self._tree.setDragEnabled(True)
+        self._tree.setDragEnabled(False)  # Issue 1: disable drag
         layout.addWidget(self._tree)
 
         # Button row
         btn_row = QHBoxLayout()
-        place_btn = QPushButton("Place Selected")
-        place_btn.clicked.connect(self._on_place_clicked)
-        btn_row.addWidget(place_btn)
-
         manage_btn = QPushButton("Manage Libraries…")
         manage_btn.setToolTip("Add / remove libraries and components")
         manage_btn.clicked.connect(self._on_manage)
@@ -85,7 +59,8 @@ class ComponentPalette(QDockWidget):
         layout.addLayout(btn_row)
 
         self.setWidget(widget)
-        self._tree.itemDoubleClicked.connect(self._on_double_click)
+        # Issue 1: single-click places the component (was double-click)
+        self._tree.itemClicked.connect(self._on_item_clicked)
         self._populate()
 
     def _populate(self, filter_text: str = "") -> None:
@@ -142,17 +117,11 @@ class ComponentPalette(QDockWidget):
     def _on_search(self, text: str) -> None:
         self._populate(text)
 
-    def _on_double_click(self, item: QTreeWidgetItem, col: int) -> None:
+    def _on_item_clicked(self, item: QTreeWidgetItem, col: int) -> None:
+        """Issue 1: single-click on a component emits place_requested."""
         comp_type = item.data(0, Qt.ItemDataRole.UserRole)
         if comp_type:
             self.place_requested.emit(comp_type)
-
-    def _on_place_clicked(self) -> None:
-        selected = self._tree.currentItem()
-        if selected:
-            comp_type = selected.data(0, Qt.ItemDataRole.UserRole)
-            if comp_type:
-                self.place_requested.emit(comp_type)
 
     def _on_manage(self) -> None:
         from ..dialogs.user_component_editor import LibraryManagerDialog

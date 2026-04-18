@@ -32,25 +32,27 @@ class SymbolCmd:
     w: float = 0.0
     h: float = 0.0
     text: str = ""
+    filled: bool = False  # Issue 6: solid fill for rect/ellipse
 
 
 @dataclass
 class LabelDef:
-    """Definition of a label attached to a user-defined component.
+    """Definition of an extra property attached to a user-defined component.
 
     Attributes
     ----------
-    text    : Label text (may reference tokens like "$ref" or "$value" in
-              future; currently treated as a literal string).
-    side    : Which side of the component body the label sits on.
-              One of ``"left"``, ``"right"``, ``"top"``, ``"bottom"``.
-    order   : Integer used to sequence multiple labels on the same side
-              (smaller = closer to the component body edge, top-to-bottom
-              or left-to-right).
+    text         : Property name (key in the component's params dict).
+    side         : Which side of the component body the label sits on.
+                   One of ``"left"``, ``"right"``, ``"top"``, ``"bottom"``.
+    order        : Integer used to sequence multiple labels on the same side
+                   (smaller = closer to the component body edge).
+    default_value: Default display value shown next to the component when no
+                   instance-specific value is set.  (Issue 12)
     """
     text: str
     side: str = "top"   # "left" | "right" | "top" | "bottom"
     order: int = 0
+    default_value: str = ""  # Issue 12: default value displayed next to component
 
 
 @dataclass
@@ -77,9 +79,36 @@ class UserCompDef:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "UserCompDef":
         pins = [PinDef(**p) for p in d.get("pins", [])]
-        symbol = [SymbolCmd(**s) for s in d.get("symbol", [])]
+        symbol_raw = d.get("symbol", [])
+        # Build SymbolCmd objects, tolerating missing fields (backward compat)
+        symbol: list[SymbolCmd] = []
+        for s in symbol_raw:
+            try:
+                symbol.append(SymbolCmd(
+                    kind=s.get("kind", "line"),
+                    x1=s.get("x1", 0.0),
+                    y1=s.get("y1", 0.0),
+                    x2=s.get("x2", 0.0),
+                    y2=s.get("y2", 0.0),
+                    w=s.get("w", 0.0),
+                    h=s.get("h", 0.0),
+                    text=s.get("text", ""),
+                    filled=s.get("filled", False),
+                ))
+            except Exception:
+                pass
         raw_labels = d.get("labels", [])
-        labels = [LabelDef(**lb) for lb in raw_labels]
+        labels: list[LabelDef] = []
+        for lb in raw_labels:
+            try:
+                labels.append(LabelDef(
+                    text=lb.get("text", ""),
+                    side=lb.get("side", "top"),
+                    order=lb.get("order", 0),
+                    default_value=lb.get("default_value", ""),
+                ))
+            except Exception:
+                pass
         return cls(
             type_name=d["type_name"],
             display_name=d.get("display_name", d["type_name"]),

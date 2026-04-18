@@ -41,7 +41,8 @@ from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
 
 # Issue 7: sub-grid (denser than existing GRID_SIZE=20).
 # Pins still snap to GRID_SIZE; drawing-tool endpoints snap to SUB_GRID.
-SUB_GRID = GRID_SIZE // 2  # 10 px
+# Issue 7: 4 sub-divisions per main grid (was 2 → SUB_GRID = GRID_SIZE // 4 = 5 px)
+SUB_GRID = GRID_SIZE // 4  # 5 px
 
 
 def _snap_sub(x: float, y: float) -> tuple[float, float]:
@@ -87,6 +88,7 @@ class _SymbolScene(QGraphicsScene):
         self.setBackgroundBrush(QColor("#f8f8f8"))
         # tools: "select" | "line" | "rect" | "ellipse" | "pin"
         self._tool: str = "select"
+        self._fill_mode: bool = False  # Issue 6: solid fill toggle
         self._line_start: QPointF | None = None
         self._temp_item: QGraphicsItem | None = None
         self.pins: list["_PinMarker"] = []
@@ -174,13 +176,15 @@ class _SymbolScene(QGraphicsScene):
             if cmd.kind == "line":
                 it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
             elif cmd.kind == "rect":
-                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h), pen,
-                                  QBrush(Qt.BrushStyle.NoBrush))
+                brush = (QBrush(QColor("#333333")) if cmd.filled
+                         else QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h), pen, brush)
             elif cmd.kind == "ellipse":
                 rx, ry = cmd.w / 2, cmd.h / 2
+                brush = (QBrush(QColor("#333333")) if cmd.filled
+                         else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addEllipse(
-                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h), pen,
-                    QBrush(Qt.BrushStyle.NoBrush))
+                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h), pen, brush)
             else:
                 it = self.addLine(0, 0, 0, 0, pen)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -249,11 +253,13 @@ class _SymbolScene(QGraphicsScene):
                 x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
-                cmd = SymbolCmd("rect", x1=rx, y1=ry, w=w, h=h)
+                cmd = SymbolCmd("rect", x1=rx, y1=ry, w=w, h=h,
+                                filled=self._fill_mode)
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
-                it = self.addRect(QRectF(rx, ry, w, h), pen,
-                                  QBrush(Qt.BrushStyle.NoBrush))
+                brush = (QBrush(QColor("#333333")) if self._fill_mode
+                         else QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addRect(QRectF(rx, ry, w, h), pen, brush)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                 self._sym_items.append(it)
@@ -271,11 +277,13 @@ class _SymbolScene(QGraphicsScene):
                 x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
-                cmd = SymbolCmd("ellipse", x1=rx + w / 2, y1=ry + h / 2, w=w, h=h)
+                cmd = SymbolCmd("ellipse", x1=rx + w / 2, y1=ry + h / 2,
+                                w=w, h=h, filled=self._fill_mode)
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
-                it = self.addEllipse(QRectF(rx, ry, w, h), pen,
-                                     QBrush(Qt.BrushStyle.NoBrush))
+                brush = (QBrush(QColor("#333333")) if self._fill_mode
+                         else QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addEllipse(QRectF(rx, ry, w, h), pen, brush)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                 self._sym_items.append(it)
@@ -469,14 +477,17 @@ class _SymbolScene(QGraphicsScene):
             if cmd.kind == "line":
                 it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
             elif cmd.kind == "rect":
+                brush = (QBrush(QColor("#333333")) if cmd.filled
+                         else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h),
-                                  pen, QBrush(Qt.BrushStyle.NoBrush))
+                                  pen, brush)
             elif cmd.kind == "ellipse":
-                # cmd.x1/y1 is the centre; cmd.w/h is the bounding rect size
                 rx, ry = cmd.w / 2, cmd.h / 2
+                brush = (QBrush(QColor("#333333")) if cmd.filled
+                         else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addEllipse(
                     QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h),
-                    pen, QBrush(Qt.BrushStyle.NoBrush))
+                    pen, brush)
             else:
                 it = self.addLine(0, 0, 0, 0, pen)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -507,8 +518,43 @@ class _PinMarker(QGraphicsEllipseItem):
 
 
 # ---------------------------------------------------------------------------
-# Issue 8: Floating icon toolbar that appears when hovering over the canvas
+# Issue 7: Zoomable view for the symbol editor canvas
 # ---------------------------------------------------------------------------
+
+class _SymView(QGraphicsView):
+    """QGraphicsView with Ctrl+wheel zoom for the symbol editor (Issue 7)."""
+
+    _ZOOM_FACTOR = 1.15
+    _ZOOM_MIN = 0.1
+    _ZOOM_MAX = 10.0
+
+    def __init__(self, scene: QGraphicsScene) -> None:
+        super().__init__(scene)
+        self._zoom_level: float = 1.0
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse
+        )
+
+    def wheelEvent(self, event: Any) -> None:
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            factor = self._ZOOM_FACTOR if delta > 0 else 1.0 / self._ZOOM_FACTOR
+            new_zoom = self._zoom_level * factor
+            if self._ZOOM_MIN <= new_zoom <= self._ZOOM_MAX:
+                self.scale(factor, factor)
+                self._zoom_level = new_zoom
+            event.accept()
+        elif mods & Qt.KeyboardModifier.ShiftModifier:
+            delta = event.angleDelta().y()
+            sb = self.horizontalScrollBar()
+            sb.setValue(sb.value() - delta // 2)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
+
 
 class _FloatingToolbar(QWidget):
     """Toolbar that floats above the drawing view, visible on hover.
@@ -526,6 +572,7 @@ class _FloatingToolbar(QWidget):
         ("▭", "Draw Rect", "rect", False),
         ("◯", "Draw Ellipse", "ellipse", False),
         ("⊙", "Add Pin", "pin", False),
+        ("■", "Toggle Fill (solid shapes)", "fill", True),  # Issue 6
         ("✕", "Clear Canvas", "clear", True),
         ("↩", "Undo (Ctrl+Z)", "undo", True),
         ("↪", "Redo (Ctrl+Y)", "redo", True),
@@ -579,6 +626,32 @@ class _FloatingToolbar(QWidget):
             self._scene._undo_stack.undo()
         elif action == "redo":
             self._scene._undo_stack.redo()
+        elif action == "fill":
+            # Issue 6: toggle fill mode; update button appearance
+            self._scene._fill_mode = not self._scene._fill_mode
+            btn = self._btn_map.get("fill")
+            if btn:
+                if self._scene._fill_mode:
+                    btn.setStyleSheet(
+                        "QPushButton {"
+                        "  background: rgba(50,50,200,200);"
+                        "  border: 1px solid #aaa;"
+                        "  border-radius: 4px;"
+                        "  font-size: 14px;"
+                        "  color: white;"
+                        "}"
+                    )
+                else:
+                    btn.setStyleSheet(
+                        "QPushButton {"
+                        "  background: rgba(255,255,255,200);"
+                        "  border: 1px solid #aaa;"
+                        "  border-radius: 4px;"
+                        "  font-size: 14px;"
+                        "}"
+                        "QPushButton:hover { background: rgba(200,220,255,220); }"
+                        "QPushButton:pressed { background: rgba(160,200,255,255); }"
+                    )
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Enter:
@@ -644,7 +717,7 @@ class UserComponentEditorDialog(QDialog):
         canvas_layout.setContentsMargins(0, 0, 0, 0)
 
         self._sym_scene = _SymbolScene()
-        self._sym_view = QGraphicsView(self._sym_scene)
+        self._sym_view = _SymView(self._sym_scene)
         self._sym_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._sym_view.setMouseTracking(True)
         self._sym_view.viewport().setMouseTracking(True)
@@ -701,18 +774,19 @@ class UserComponentEditorDialog(QDialog):
 
         right.addWidget(pin_box)
 
-        # ── Issue 6: Extra labels section ─────────────────────────────
-        label_box = QGroupBox("Extra Labels (beyond Ref/Value)")
+        # ── Issue 12: Extra Properties section (renamed from Extra Labels) ──
+        label_box = QGroupBox("Extra Properties (beyond Ref/Value)")
         label_layout = QVBoxLayout(label_box)
         self._label_list = QListWidget()
         self._label_list.setToolTip(
-            "Extra labels attached to this component.\n"
-            "Each entry: <text>  [<side>  order=<n>]"
+            "Extra properties attached to this component.\n"
+            "Each entry: <name>  [<side>  order=<n>  default=<value>]\n"
+            "The property VALUE (not name) is displayed next to the component."
         )
         label_layout.addWidget(self._label_list)
 
         label_btn_row = QHBoxLayout()
-        add_lbl_btn = QPushButton("Add Label…")
+        add_lbl_btn = QPushButton("Add Property…")
         add_lbl_btn.clicked.connect(self._add_label)
         edit_lbl_btn = QPushButton("Edit…")
         edit_lbl_btn.clicked.connect(self._edit_label)
@@ -755,15 +829,36 @@ class UserComponentEditorDialog(QDialog):
                     ref_prefix=existing.ref_prefix,
                     default_value=existing.default_value,
                     pins=[PinDef(**p) for p in existing.pins],
-                    symbol=[SymbolCmd(**s) for s in existing.symbol],
+                    symbol=[
+                        SymbolCmd(
+                            kind=s.get("kind", "line") if isinstance(s, dict) else s.kind,
+                            x1=s.get("x1", 0.0) if isinstance(s, dict) else s.x1,
+                            y1=s.get("y1", 0.0) if isinstance(s, dict) else s.y1,
+                            x2=s.get("x2", 0.0) if isinstance(s, dict) else s.x2,
+                            y2=s.get("y2", 0.0) if isinstance(s, dict) else s.y2,
+                            w=s.get("w", 0.0) if isinstance(s, dict) else s.w,
+                            h=s.get("h", 0.0) if isinstance(s, dict) else s.h,
+                            text=s.get("text", "") if isinstance(s, dict) else s.text,
+                            filled=s.get("filled", False) if isinstance(s, dict) else s.filled,
+                        )
+                        for s in existing.symbol
+                    ],
                 )
                 self._sym_scene.load_def(_sym_udef)
             else:
                 # Issue 1: For built-in components, show actual rendered preview
                 self._load_builtin_preview(existing)
-            # Populate existing extra labels
+            # Populate existing extra properties
             for lbl_dict in existing.labels:
-                ldef = LabelDef(**lbl_dict) if isinstance(lbl_dict, dict) else lbl_dict
+                if isinstance(lbl_dict, dict):
+                    ldef = LabelDef(
+                        text=lbl_dict.get("text", ""),
+                        side=lbl_dict.get("side", "top"),
+                        order=lbl_dict.get("order", 0),
+                        default_value=lbl_dict.get("default_value", ""),
+                    )
+                else:
+                    ldef = lbl_dict
                 self._label_defs.append(ldef)
             self._refresh_label_list()
             self._refresh_pin_list()
@@ -824,7 +919,9 @@ class UserComponentEditorDialog(QDialog):
         self._label_list.clear()
         for ld in self._label_defs:
             self._label_list.addItem(
-                f"{ld.text!r}  [{ld.side}  order={ld.order}]"
+                f"{ld.text!r}  [{ld.side}  order={ld.order}"
+                + (f"  default={ld.default_value!r}" if ld.default_value else "")
+                + "]"
             )
 
     def _add_label(self) -> None:
@@ -869,8 +966,10 @@ class UserComponentEditorDialog(QDialog):
         if self._existing is not None:
             is_builtin = self._existing.is_builtin
 
+        # Issue 12: include default_value in label serialisation
         labels_data = [
-            {"text": ld.text, "side": ld.side, "order": ld.order}
+            {"text": ld.text, "side": ld.side, "order": ld.order,
+             "default_value": ld.default_value}
             for ld in self._label_defs
         ]
 
@@ -889,26 +988,45 @@ class UserComponentEditorDialog(QDialog):
         )
 
         lm = LibraryManager()
+        # Issue 5: if the type_name was changed during edit, delete the old entry
+        # first so we don't leave a stale entry in the library.
+        if (self._existing is not None
+                and self._existing.type_name != type_name):
+            lm.delete_entry(self._library_id, self._existing.type_name)
+
         lm.save_entry(self._library_id, entry)
 
         self.accept()
 
 
 # ---------------------------------------------------------------------------
-# Simple label-definition editor dialog (Issue 6)
+# ---------------------------------------------------------------------------
+# Extra-property definition editor dialog (Issue 12: renamed from LabelEditDialog)
 # ---------------------------------------------------------------------------
 
 class _LabelEditDialog(QDialog):
-    """Small dialog for adding or editing a LabelDef."""
+    """Small dialog for adding or editing an extra-property definition.
+
+    Issue 12: renamed to 'Extra Property'.  Each property has:
+    - Property name: the key stored in the component's params dict.
+    - Default value: displayed next to the component when no instance
+      value has been set.
+    - Side and order: layout position.
+    """
 
     def __init__(self, parent: QWidget | None = None,
                  ldef: LabelDef | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Label Definition")
+        self.setWindowTitle("Extra Property Definition")
         layout = QFormLayout(self)
 
         self._text_edit = QLineEdit(ldef.text if ldef else "")
-        layout.addRow("Label text:", self._text_edit)
+        layout.addRow("Property name:", self._text_edit)
+
+        # Issue 12: default value field
+        self._default_edit = QLineEdit(
+            ldef.default_value if (ldef and ldef.default_value) else "")
+        layout.addRow("Default value:", self._default_edit)
 
         self._side_combo = QComboBox()
         for s in ("top", "bottom", "left", "right"):
@@ -939,6 +1057,7 @@ class _LabelEditDialog(QDialog):
             text=self._text_edit.text().strip(),
             side=self._side_combo.currentText(),
             order=order,
+            default_value=self._default_edit.text().strip(),
         )
 
 

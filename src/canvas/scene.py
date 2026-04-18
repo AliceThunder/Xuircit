@@ -754,6 +754,14 @@ class CircuitScene(QGraphicsScene):
                 item._val_label.pos().x(),
                 item._val_label.pos().y(),
             ]
+            # Issue 14: persist per-label visibility flags
+            comp["ref_visible"] = item._ref_visible
+            comp["val_visible"] = item._val_visible
+            from ..components.user_component import UserComponentItem
+            if isinstance(item, UserComponentItem):
+                comp["extra_visible"] = list(item._extra_visible)
+                # Issue 12: persist extra property values from params
+                comp["params"] = dict(item.params)
 
     def rebuild_from_circuit(self) -> None:
         """Clear and repopulate the scene from self.circuit."""
@@ -803,6 +811,20 @@ class CircuitScene(QGraphicsScene):
                     if label_format < 2:
                         lvp = _migrate_label_pos(lvp, rot)
                     item._val_label.setPos(QPointF(lvp[0], lvp[1]))
+                # Issue 14: restore per-label visibility flags
+                item._ref_visible = comp.get("ref_visible", True)
+                item._val_visible = comp.get("val_visible", True)
+                item._refresh_labels()
+                # Issue 14: restore extra-property visibility for UserComponentItem
+                from ..components.user_component import UserComponentItem
+                if isinstance(item, UserComponentItem):
+                    ev = comp.get("extra_visible")
+                    if ev and isinstance(ev, list):
+                        for i, v in enumerate(ev):
+                            if i < len(item._extra_visible):
+                                item._extra_visible[i] = bool(v)
+                    item._refresh_extra_labels()
+                    item._auto_layout_all_labels()
                 self.addItem(item)
 
         # Wires are auto-generated — no need to restore from file
