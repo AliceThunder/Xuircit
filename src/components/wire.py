@@ -19,7 +19,8 @@ class WireItem(QGraphicsPathItem):
     """A wire between two points, auto-routed at 90° angles."""
 
     def __init__(self, start: QPointF, end: QPointF,
-                 wire_id: str | None = None) -> None:
+                 wire_id: str | None = None,
+                 is_auto: bool = False) -> None:
         super().__init__()
         self.wire_id: str = wire_id or str(uuid.uuid4())
         self.start_pos = start
@@ -27,12 +28,20 @@ class WireItem(QGraphicsPathItem):
         self.start_pin: tuple[str, str] | None = None
         self.end_pin: tuple[str, str] | None = None
         self.net_name: str = ""
+        # Bug 1 fix: auto-generated wires are non-interactive
+        self.is_auto: bool = is_auto
 
         pen = QPen(QColor("#1a1a8c"), 2.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self.setPen(pen)
-        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable)
+        if not is_auto:
+            self.setFlag(self.GraphicsItemFlag.ItemIsSelectable)
+        else:
+            # Auto-wires: not selectable, not focusable, don't accept mouse events
+            self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, False)
+            self.setFlag(self.GraphicsItemFlag.ItemIsFocusable, False)
+            self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setZValue(1)
         self._rebuild_path()
 

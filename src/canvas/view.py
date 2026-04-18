@@ -130,6 +130,13 @@ class CircuitView(QGraphicsView):
                 event.mimeData().data(self._PALETTE_MIME).data().decode("utf-8")
             )
             scene = self.scene()
+            # Bug 1 fix: switch to PLACE_COMPONENT mode so R/F/V shortcuts work
+            if hasattr(scene, "set_mode") and hasattr(scene, "SceneMode"):
+                pass  # SceneMode is module-level; import directly
+            if hasattr(scene, "set_pending_component"):
+                from ..canvas.scene import SceneMode
+                if hasattr(scene, "set_mode"):
+                    scene.set_mode(SceneMode.PLACE_COMPONENT)  # type: ignore[union-attr]
             # Create a ghost preview if one is not already showing
             if (
                 hasattr(scene, "set_pending_component")
@@ -137,6 +144,8 @@ class CircuitView(QGraphicsView):
                 and scene._ghost is None  # type: ignore[union-attr]
             ):
                 scene.set_pending_component(comp_type)  # type: ignore[union-attr]
+            # Bug 1 / Bug 2 fix: take keyboard focus so R/F/V reach the scene
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)  # type: ignore[arg-type]

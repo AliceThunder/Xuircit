@@ -302,6 +302,13 @@ class ComponentItem(QGraphicsItem):
                 self._undo_before_snap: Any = scene._take_snapshot()  # type: ignore[union-attr]
             else:
                 self._undo_before_snap = None
+            # Bug 3 fix: record the original positions of ALL currently-selected
+            # ComponentItems so we can move the whole group as one.
+            self._drag_group_origins: dict["ComponentItem", QPointF] = {}
+            if scene is not None and self.isSelected():
+                for it in scene.selectedItems():
+                    if isinstance(it, ComponentItem):
+                        self._drag_group_origins[it] = it.pos()
             event.accept()
         # Allow the default handler to manage selection
         super().mousePressEvent(event)
@@ -316,10 +323,17 @@ class ComponentItem(QGraphicsItem):
                 if (abs(delta.x()) + abs(delta.y())) < _DRAG_THRESHOLD:
                     return  # below threshold – don't start drag yet
                 self._dragging = True
-            assert self._drag_orig_pos is not None
-            new_x = snap(self._drag_orig_pos.x() + delta.x())
-            new_y = snap(self._drag_orig_pos.y() + delta.y())
-            self.setPos(QPointF(new_x, new_y))
+            # Bug 3 fix: if we are dragging a group of selected items, move them all.
+            group = getattr(self, '_drag_group_origins', {})
+            if len(group) > 1:
+                for it, orig in group.items():
+                    it.setPos(QPointF(snap(orig.x() + delta.x()),
+                                     snap(orig.y() + delta.y())))
+            else:
+                assert self._drag_orig_pos is not None
+                new_x = snap(self._drag_orig_pos.x() + delta.x())
+                new_y = snap(self._drag_orig_pos.y() + delta.y())
+                self.setPos(QPointF(new_x, new_y))
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -331,6 +345,7 @@ class ComponentItem(QGraphicsItem):
         self._drag_orig_pos = None
         self._dragging = False
         self._undo_before_snap = None
+        self._drag_group_origins = {}
         super().mouseReleaseEvent(event)
         if was_dragging:
             scene = self.scene()
