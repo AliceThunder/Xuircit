@@ -46,6 +46,16 @@ class SpiceHighlighter(QSyntaxHighlighter):
             directive_fmt,
         ))
 
+        # XCIT section headers (.xcit_layout, .end_xcit_layout, etc.) —
+        # must come after the directive rule so it takes precedence.
+        xcit_fmt = QTextCharFormat()
+        xcit_fmt.setForeground(QColor("#660066"))
+        xcit_fmt.setFontWeight(QFont.Weight.Bold.value)
+        self._rules.append((
+            QRegularExpression(r"^\.(xcit_\w+|end_xcit_\w+)\b.*"),
+            xcit_fmt,
+        ))
+
         # Element lines (starting with R/C/L/V/I/D/Q/M/E/F/G/H/S/W/B/X)
         element_fmt = QTextCharFormat()
         element_fmt.setForeground(QColor("#00008b"))
@@ -89,11 +99,13 @@ class NetlistEditor(QDockWidget):
 
         # Toolbar
         tb = QHBoxLayout()
-        self._btn_gen = QPushButton("Generate from Schematic")
+        self._btn_gen = QPushButton("Generate SPICE")
+        self._btn_gen_xcit = QPushButton("Generate XCIT")
         self._btn_apply = QPushButton("Apply to Schematic")
         self._btn_load = QPushButton("Load File…")
         self._btn_save = QPushButton("Save File…")
-        for btn in (self._btn_gen, self._btn_apply, self._btn_load, self._btn_save):
+        for btn in (self._btn_gen, self._btn_gen_xcit, self._btn_apply,
+                    self._btn_load, self._btn_save):
             tb.addWidget(btn)
         tb.addStretch()
         layout.addLayout(tb)
@@ -108,6 +120,7 @@ class NetlistEditor(QDockWidget):
         self.setWidget(widget)
 
         self._btn_gen.clicked.connect(self._generate)
+        self._btn_gen_xcit.clicked.connect(self._generate_xcit)
         self._btn_apply.clicked.connect(self._apply)
         self._btn_load.clicked.connect(self._load_file)
         self._btn_save.clicked.connect(self._save_file)
@@ -129,6 +142,14 @@ class NetlistEditor(QDockWidget):
         text = generate_netlist(self._scene.circuit)
         self._editor.setPlainText(text)
 
+    def _generate_xcit(self) -> None:
+        from ..canvas.scene import CircuitScene
+        from ..io.xcit_netlist import generate_xcit_netlist
+        if not isinstance(self._scene, CircuitScene):
+            return
+        text = generate_xcit_netlist(self._scene.circuit)
+        self._editor.setPlainText(text)
+
     def _apply(self) -> None:
         from ..canvas.scene import CircuitScene
         if not isinstance(self._scene, CircuitScene):
@@ -141,7 +162,9 @@ class NetlistEditor(QDockWidget):
     def _load_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             None, "Open Netlist", "",
-            "SPICE files (*.sp *.net *.cir);;Text files (*.txt);;All files (*)"
+            "All netlist files (*.xcit_net *.sp *.net *.cir *.txt);;"
+            "XCIT files (*.xcit_net);;SPICE files (*.sp *.net *.cir);;"
+            "Text files (*.txt);;All files (*)"
         )
         if path:
             try:
@@ -153,7 +176,7 @@ class NetlistEditor(QDockWidget):
     def _save_file(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             None, "Save Netlist", "",
-            "SPICE files (*.sp *.net *.cir);;Text files (*.txt)"
+            "XCIT files (*.xcit_net);;SPICE files (*.sp *.net *.cir);;Text files (*.txt)"
         )
         if path:
             try:

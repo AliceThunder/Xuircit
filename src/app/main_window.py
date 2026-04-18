@@ -94,8 +94,11 @@ class MainWindow(QMainWindow):
         self._action("Export as P&DF…",
                      callback=lambda: self._export("PDF"),
                      parent_menu=export_menu)
-        self._action("Export &Netlist…",
+        self._action("Export &Netlist (SPICE)…",
                      callback=self._export_netlist,
+                     parent_menu=export_menu)
+        self._action("Export &XCIT Netlist…",
+                     callback=self._export_xcit_netlist,
                      parent_menu=export_menu)
 
         for act in (self._act_new, self._act_open, self._act_save,
@@ -311,12 +314,28 @@ class MainWindow(QMainWindow):
 
     def _do_save(self, path: str) -> None:
         try:
+            self._sync_scene_to_circuit()
             from ..io.project_file import save_project
             save_project(self._circuit, path)
             self._modified = False
             self._update_title()
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", str(exc))
+
+    def _sync_scene_to_circuit(self) -> None:
+        """Sync scene item state (rotation, flip, label positions) back to the
+        circuit model so that saves and exports are always up to date."""
+        from ..components.base import ComponentItem
+        from ..components.wire import WireItem
+        for item in self._scene.items():
+            if isinstance(item, ComponentItem):
+                comp = self._circuit.get_component(item.component_id)
+                if comp is not None:
+                    comp.update(item.to_dict())
+            elif isinstance(item, WireItem):
+                wire = self._circuit.get_wire(item.wire_id)
+                if wire is not None:
+                    wire.update(item.to_dict())
 
     def _import_netlist(self) -> None:
         from ..dialogs.import_dialog import ImportDialog
@@ -336,8 +355,24 @@ class MainWindow(QMainWindow):
         )
         if path:
             try:
+                self._sync_scene_to_circuit()
                 from ..io.netlist_generator import generate_netlist
                 text = generate_netlist(self._circuit)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            except Exception as exc:
+                QMessageBox.critical(self, "Error", str(exc))
+
+    def _export_xcit_netlist(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export XCIT Netlist", "",
+            "XCIT files (*.xcit_net);;Text files (*.txt)"
+        )
+        if path:
+            try:
+                self._sync_scene_to_circuit()
+                from ..io.xcit_netlist import generate_xcit_netlist
+                text = generate_xcit_netlist(self._circuit)
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(text)
             except Exception as exc:

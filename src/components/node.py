@@ -36,6 +36,8 @@ class GroundItem(ComponentItem):
 
     _WIDTH = 40.0
     _HEIGHT = 40.0
+    _ref_label_offset = (28.0, -10.0)
+    _val_label_offset = (28.0, 6.0)
 
     def __init__(self, ref: str = "GND1", value: str = "",
                  params: dict[str, Any] | None = None,

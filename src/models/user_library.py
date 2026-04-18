@@ -44,6 +44,10 @@ class UserCompDef:
     default_value: str = ""
     pins: list[PinDef] = field(default_factory=list)
     symbol: list[SymbolCmd] = field(default_factory=list)
+    # Label positions as [dx, dy] offsets relative to component centre.
+    # None means use the built-in default.
+    ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
+    val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -62,6 +66,8 @@ class UserCompDef:
             default_value=d.get("default_value", ""),
             pins=pins,
             symbol=symbol,
+            ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
+            val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
         )
 
 

@@ -15,6 +15,8 @@ class IdealSwitchItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 30.0
+    _ref_label_offset = (0.0, -24.0)
+    _val_label_offset = (0.0, 20.0)
 
     def __init__(self, ref: str = "SW1", value: str = "",
                  params: dict[str, Any] | None = None,
@@ -43,6 +45,8 @@ class SCRItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 50.0
+    _ref_label_offset = (0.0, -34.0)
+    _val_label_offset = (0.0, 34.0)
 
     def __init__(self, ref: str = "SCR1", value: str = "TYN612",
                  params: dict[str, Any] | None = None,
@@ -80,6 +84,8 @@ class TRIACItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 60.0
+    _ref_label_offset = (0.0, -40.0)
+    _val_label_offset = (0.0, 40.0)
 
     def __init__(self, ref: str = "TRIAC1", value: str = "BTA12",
                  params: dict[str, Any] | None = None,

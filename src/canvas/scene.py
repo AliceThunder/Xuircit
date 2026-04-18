@@ -270,6 +270,9 @@ class CircuitScene(QGraphicsScene):
         self.circuit.add_component(comp_dict)
         self.component_placed.emit(comp_dict)
 
+        # Auto-connect aligned pins after placement
+        self._auto_connect_component(item)
+
     # ------------------------------------------------------------------
     # Wire drawing
     # ------------------------------------------------------------------
@@ -390,6 +393,120 @@ class CircuitScene(QGraphicsScene):
             self.removeItem(self._align_indicator)
             self._align_indicator = None
 
+    # ------------------------------------------------------------------
+    # Auto-connect (called after component placement)
+    # ------------------------------------------------------------------
+
+    def _auto_connect_component(self, new_item: ComponentItem) -> None:
+        """After placing *new_item*, auto-draw wires to any H/V aligned pins.
+
+        Checks every pin of *new_item* against every pin of every other
+        component.  When two pins share an X (vertical) or Y (horizontal)
+        coordinate — with no intervening component blocking the straight line
+        — a wire is drawn automatically.
+        """
+        for pin_name, pin in new_item._pins.items():
+            pin_sp = new_item.mapToScene(pin.pos())
+            self._try_auto_wire(new_item, pin_name, pin_sp)
+
+    def _try_auto_wire(
+        self,
+        new_item: ComponentItem,
+        new_pin: str,
+        pin_sp: QPointF,
+    ) -> None:
+        """Try to auto-connect pin_sp to any aligned, unobstructed existing pin."""
+        search = QRectF(
+            pin_sp.x() - 2000, pin_sp.y() - 2000, 4000, 4000
+        )
+        for item in self.items(search):
+            if not isinstance(item, ComponentItem):
+                continue
+            if item is new_item:
+                continue
+            for other_pin_name, other_pin in item._pins.items():
+                other_sp = item.mapToScene(other_pin.pos())
+                dx = abs(other_sp.x() - pin_sp.x())
+                dy = abs(other_sp.y() - pin_sp.y())
+                is_h_aligned = dy < _COORD_EPSILON and dx > _COORD_EPSILON
+                is_v_aligned = dx < _COORD_EPSILON and dy > _COORD_EPSILON
+                if not is_h_aligned and not is_v_aligned:
+                    continue
+                # Avoid duplicate wires
+                if self._wire_exists(new_item.component_id, new_pin,
+                                     item.component_id, other_pin_name):
+                    continue
+                # Only draw if path is unobstructed
+                if self._is_path_clear(pin_sp, other_sp, {new_item, item}):
+                    self._add_auto_wire(
+                        pin_sp, other_sp,
+                        (new_item.component_id, new_pin),
+                        (item.component_id, other_pin_name),
+                    )
+
+    def _is_path_clear(
+        self,
+        p1: QPointF,
+        p2: QPointF,
+        exclude: set[ComponentItem],
+    ) -> bool:
+        """Return True if the straight line from p1 to p2 is unobstructed.
+
+        Builds a thin check rectangle along the path (shrinking endpoints by
+        a small margin so the endpoint components themselves are not flagged).
+        """
+        shrink = 6.0
+        tol = 4.0
+        if abs(p1.y() - p2.y()) < _COORD_EPSILON:
+            # Horizontal wire
+            x1, x2 = min(p1.x(), p2.x()) + shrink, max(p1.x(), p2.x()) - shrink
+            if x2 <= x1:
+                return True
+            check_rect = QRectF(x1, p1.y() - tol, x2 - x1, 2 * tol)
+        else:
+            # Vertical wire
+            y1, y2 = min(p1.y(), p2.y()) + shrink, max(p1.y(), p2.y()) - shrink
+            if y2 <= y1:
+                return True
+            check_rect = QRectF(p1.x() - tol, y1, 2 * tol, y2 - y1)
+
+        for item in self.items(check_rect):
+            if isinstance(item, ComponentItem) and item not in exclude:
+                return False
+        return True
+
+    def _wire_exists(
+        self, c1: str, p1: str, c2: str, p2: str
+    ) -> bool:
+        """Return True if a wire already connects these two pins."""
+        for wire in self.circuit.wires:
+            sp = wire.get("start_pin")
+            ep = wire.get("end_pin")
+            if sp and ep:
+                if (sp[0] == c1 and sp[1] == p1 and
+                        ep[0] == c2 and ep[1] == p2):
+                    return True
+                if (sp[0] == c2 and sp[1] == p2 and
+                        ep[0] == c1 and ep[1] == p1):
+                    return True
+        return False
+
+    def _add_auto_wire(
+        self,
+        start: QPointF,
+        end: QPointF,
+        start_pin: tuple[str, str],
+        end_pin: tuple[str, str],
+    ) -> None:
+        """Create and register a wire between two pins."""
+        wire = WireItem(start, end, wire_id=str(uuid.uuid4()))
+        wire.start_pin = start_pin
+        wire.end_pin = end_pin
+        self.addItem(wire)
+        wire_dict = wire.to_dict()
+        self.circuit.add_wire(wire_dict)
+        self.wire_drawn.emit(wire_dict)
+
     def _nearest_pin(
         self, pos: QPointF, radius: float = _PIN_SNAP_RADIUS
     ) -> tuple[QPointF | None, tuple[str, str] | None]:
@@ -476,6 +593,13 @@ class CircuitScene(QGraphicsScene):
                         0, 0, 1,
                     )
                     item.setTransform(t)
+                # Restore dragged label positions (if previously saved)
+                lrp = comp.get("label_ref_pos")
+                if lrp:
+                    item._ref_label.setPos(QPointF(lrp[0], lrp[1]))
+                lvp = comp.get("label_val_pos")
+                if lvp:
+                    item._val_label.setPos(QPointF(lvp[0], lvp[1]))
                 self.addItem(item)
 
         for wire_data in self.circuit.wires:
@@ -483,7 +607,15 @@ class CircuitScene(QGraphicsScene):
             self.addItem(wire)
 
     def apply_netlist(self, netlist_text: str) -> None:
-        """Parse netlist and reconstruct scene."""
+        """Parse netlist and reconstruct scene.
+
+        Automatically detects XCIT format (contains ``.xcit_layout``) and
+        uses position data from the file when present.
+        """
+        if ".xcit_layout" in netlist_text:
+            self._apply_xcit_netlist(netlist_text)
+            return
+
         from ..io.netlist_parser import parse_netlist, layout_components
 
         components = parse_netlist(netlist_text)
@@ -504,6 +636,56 @@ class CircuitScene(QGraphicsScene):
                 "rotation": 0,
             }
             self.circuit.add_component(comp_dict)
+
+        self.rebuild_from_circuit()
+
+    def _apply_xcit_netlist(self, xcit_text: str) -> None:
+        """Parse an XCIT extended netlist and reconstruct scene with stored positions."""
+        from ..io.xcit_netlist import parse_xcit_netlist
+        from ..io.netlist_parser import layout_components
+
+        components, positions, wires = parse_xcit_netlist(xcit_text)
+        self.circuit.clear()
+
+        # Assign positions from layout section; fall back to auto-layout
+        auto_positions = layout_components(components)
+        for i, comp in enumerate(components):
+            ref = comp.get("ref", "X1")
+            pos_data = positions.get(ref)
+            if pos_data:
+                x, y = pos_data["x"], pos_data["y"]
+                rot = pos_data.get("rotation", 0)
+                fh = pos_data.get("flip_h", False)
+                fv = pos_data.get("flip_v", False)
+                lrp = pos_data.get("label_ref_pos", None)
+                lvp = pos_data.get("label_val_pos", None)
+            else:
+                x, y = auto_positions[i]
+                rot, fh, fv = 0, False, False
+                lrp, lvp = None, None
+
+            comp_id = str(uuid.uuid4())
+            comp_dict: dict[str, Any] = {
+                "id": comp_id,
+                "type": comp.get("type", "R"),
+                "ref": ref,
+                "value": comp.get("value", ""),
+                "params": comp.get("params", {}),
+                "x": x,
+                "y": y,
+                "rotation": rot,
+                "flip_h": fh,
+                "flip_v": fv,
+            }
+            if lrp:
+                comp_dict["label_ref_pos"] = lrp
+            if lvp:
+                comp_dict["label_val_pos"] = lvp
+            self.circuit.add_component(comp_dict)
+
+        # Restore wires
+        for wire_data in wires:
+            self.circuit.add_wire(wire_data)
 
         self.rebuild_from_circuit()
 

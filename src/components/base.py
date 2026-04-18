@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsSceneContextMenuEvent,
     QGraphicsSceneMouseEvent,
+    QGraphicsSimpleTextItem,
     QMenu,
     QStyleOptionGraphicsItem,
     QWidget,
@@ -52,11 +53,58 @@ class PinItem(QGraphicsEllipseItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
 
+class LabelItem(QGraphicsSimpleTextItem):
+    """A draggable, always-upright text label attached to a component.
+
+    Uses ItemIgnoresTransformations so the text is never rotated/flipped
+    regardless of the parent component's transform.  The position (pos())
+    is in parent-local coordinates and acts as a direct screen-space offset
+    from the parent's scene position.
+    """
+
+    def __init__(self, text: str, parent: "ComponentItem") -> None:
+        super().__init__(text, parent)
+        font = QFont("monospace", 8)
+        self.setFont(font)
+        self.setBrush(QBrush(QColor("#333333")))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setZValue(5)
+
+    def boundingRect(self) -> QRectF:
+        """Return a bounding rect centred on the item's origin."""
+        br = super().boundingRect()
+        return QRectF(-br.width() / 2, -br.height() / 2,
+                      br.width(), br.height())
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        # Shift painter so that the text is drawn centred around the origin.
+        br = QGraphicsSimpleTextItem.boundingRect(self)
+        painter.translate(-br.width() / 2, -br.height() / 2)
+        super().paint(painter, option, widget)
+
+
 class ComponentItem(QGraphicsItem):
     """Abstract base for all schematic component graphics items."""
 
     _WIDTH: float = 60.0
     _HEIGHT: float = 40.0
+
+    # Default label offsets (in screen-space relative to parent scene pos).
+    # Subclasses override these as (dx, dy) tuples.
+    _ref_label_offset: tuple[float, float] = (0.0, -22.0)
+    _val_label_offset: tuple[float, float] = (0.0, 14.0)
+
+    # Set to False in subclasses that should not display ref/value labels.
+    _show_ref_label: bool = True
+    _show_val_label: bool = True
 
     def __init__(
         self,
@@ -91,6 +139,15 @@ class ComponentItem(QGraphicsItem):
         self._pins: dict[str, PinItem] = {}
         self._build_pins()
 
+        # Draggable, always-upright labels
+        self._ref_label = LabelItem(self.ref, self)
+        self._ref_label.setPos(QPointF(*self._ref_label_offset))
+        self._ref_label.setVisible(self._show_ref_label)
+
+        self._val_label = LabelItem(self.value, self)
+        self._val_label.setPos(QPointF(*self._val_label_offset))
+        self._val_label.setVisible(bool(self.value) and self._show_val_label)
+
     # ------------------------------------------------------------------
     # Override in subclasses
     # ------------------------------------------------------------------
@@ -123,13 +180,46 @@ class ComponentItem(QGraphicsItem):
             p.setVisible(visible)
 
     # ------------------------------------------------------------------
+    # Label helpers
+    # ------------------------------------------------------------------
+
+    def _refresh_labels(self) -> None:
+        """Sync label text with current ref/value fields."""
+        self._ref_label.setText(self.ref)
+        self._ref_label.setVisible(self._show_ref_label)
+        self._val_label.setText(self.value)
+        self._val_label.setVisible(bool(self.value) and self._show_val_label)
+
+    def _rotate_label_offset(self, label: LabelItem) -> None:
+        """Rotate the label offset 90° CW in screen-space (y-down)."""
+        p = label.pos()
+        # CW 90° in screen (y-down): (x, y) → (-y, x)
+        label.setPos(QPointF(-p.y(), p.x()))
+
+    def _rotate_label_offset_ccw(self, label: LabelItem) -> None:
+        """Rotate the label offset 90° CCW in screen-space (y-down)."""
+        p = label.pos()
+        # CCW 90° in screen (y-down): (x, y) → (y, -x)
+        label.setPos(QPointF(p.y(), -p.x()))
+
+    def _flip_label_h(self, label: LabelItem) -> None:
+        """Mirror label offset about the vertical axis: (x, y) → (-x, y)."""
+        p = label.pos()
+        label.setPos(QPointF(-p.x(), p.y()))
+
+    def _flip_label_v(self, label: LabelItem) -> None:
+        """Mirror label offset about the horizontal axis: (x, y) → (x, -y)."""
+        p = label.pos()
+        label.setPos(QPointF(p.x(), -p.y()))
+
+    # ------------------------------------------------------------------
     # QGraphicsItem interface
     # ------------------------------------------------------------------
 
     def boundingRect(self) -> QRectF:
         hw = self._WIDTH / 2
         hh = self._HEIGHT / 2
-        return QRectF(-hw - 4, -hh - 16, self._WIDTH + 8, self._HEIGHT + 28)
+        return QRectF(-hw - 4, -hh - 4, self._WIDTH + 8, self._HEIGHT + 8)
 
     def paint(
         self,
@@ -149,23 +239,6 @@ class ComponentItem(QGraphicsItem):
             )
 
         self._draw_symbol(painter)
-
-        font = QFont("monospace", 8)
-        painter.setFont(font)
-        painter.setPen(QPen(QColor("#333333")))
-        painter.drawText(
-            QRectF(-self._WIDTH / 2, -self._HEIGHT / 2 - 14,
-                   self._WIDTH, 12),
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-            self.ref,
-        )
-        if self.value:
-            painter.drawText(
-                QRectF(-self._WIDTH / 2, self._HEIGHT / 2 + 2,
-                       self._WIDTH, 12),
-                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                self.value,
-            )
 
     # ------------------------------------------------------------------
     # Hover: show/hide pins
@@ -246,21 +319,29 @@ class ComponentItem(QGraphicsItem):
 
     def _rotate_cw(self) -> None:
         self.setRotation(self.rotation() + 90)
+        self._rotate_label_offset(self._ref_label)
+        self._rotate_label_offset(self._val_label)
 
     def _rotate_ccw(self) -> None:
         self.setRotation(self.rotation() - 90)
+        self._rotate_label_offset_ccw(self._ref_label)
+        self._rotate_label_offset_ccw(self._val_label)
 
     def _flip_h(self) -> None:
         """Flip horizontally (mirror about vertical axis)."""
         self._flip_h_active = not self._flip_h_active
         t = QTransform(-1, 0, 0, 0, 1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
+        self._flip_label_h(self._ref_label)
+        self._flip_label_h(self._val_label)
 
     def _flip_v(self) -> None:
         """Flip vertically (mirror about horizontal axis)."""
         self._flip_v_active = not self._flip_v_active
         t = QTransform(1, 0, 0, 0, -1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
+        self._flip_label_v(self._ref_label)
+        self._flip_label_v(self._val_label)
 
     def _delete_self(self) -> None:
         scene = self.scene()
@@ -294,6 +375,10 @@ class ComponentItem(QGraphicsItem):
             "rotation": self.rotation(),
             "flip_h": self._flip_h_active,
             "flip_v": self._flip_v_active,
+            "label_ref_pos": [self._ref_label.pos().x(),
+                               self._ref_label.pos().y()],
+            "label_val_pos": [self._val_label.pos().x(),
+                               self._val_label.pos().y()],
         }
 
 
@@ -322,6 +407,7 @@ def _open_properties(item: "ComponentItem") -> None:
     if dlg.exec() == QDialog.DialogCode.Accepted:
         item.ref = ref_edit.text().strip()
         item.value = val_edit.text().strip()
+        item._refresh_labels()
         item.update()
 
 

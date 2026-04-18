@@ -15,6 +15,8 @@ class ResistorItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 20.0
+    _ref_label_offset = (0.0, -18.0)
+    _val_label_offset = (0.0, 14.0)
 
     def __init__(self, ref: str = "R1", value: str = "1k",
                  params: dict[str, Any] | None = None,
@@ -43,6 +45,8 @@ class CapacitorItem(ComponentItem):
 
     _WIDTH = 30.0
     _HEIGHT = 40.0
+    _ref_label_offset = (-28.0, -8.0)
+    _val_label_offset = (24.0, -8.0)
 
     def __init__(self, ref: str = "C1", value: str = "100n",
                  params: dict[str, Any] | None = None,
@@ -70,6 +74,8 @@ class InductorItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 24.0
+    _ref_label_offset = (0.0, -18.0)
+    _val_label_offset = (0.0, 16.0)
 
     def __init__(self, ref: str = "L1", value: str = "10u",
                  params: dict[str, Any] | None = None,
@@ -96,6 +102,8 @@ class TransformerItem(ComponentItem):
 
     _WIDTH = 80.0
     _HEIGHT = 80.0
+    _ref_label_offset = (0.0, -50.0)
+    _val_label_offset = (0.0, 50.0)
 
     def __init__(self, ref: str = "T1", value: str = "",
                  params: dict[str, Any] | None = None,
