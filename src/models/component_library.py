@@ -104,6 +104,12 @@ class ComponentLibrary:
             ComponentDef("JUNCTION", "Wiring", "Junction",
                          "Wire junction dot",
                          [], "", {}, "J"),
+            ComponentDef("ELBOW", "Wiring", "Elbow (90° bend)",
+                         "Right-angle wire connector — connects two wires at a 90° corner",
+                         ["a", "b"], "", {}, "J"),
+            ComponentDef("TEE", "Wiring", "Tee (T-junction)",
+                         "T-junction wire connector — connects three wires",
+                         ["left", "right", "down"], "", {}, "J"),
         ]
         for d in defs:
             self._registry[d.type_name] = d

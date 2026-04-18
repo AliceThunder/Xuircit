@@ -11,6 +11,7 @@ from PyQt6.QtGui import (
     QFont,
     QPainter,
     QPen,
+    QTransform,
 )
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
@@ -23,6 +24,8 @@ from PyQt6.QtWidgets import (
 )
 
 GRID = 20  # px
+# Minimum Manhattan-length (in scene coords) before a click becomes a drag.
+_DRAG_THRESHOLD = 4
 
 
 def snap(v: float) -> float:
@@ -44,6 +47,9 @@ class PinItem(QGraphicsEllipseItem):
         self.setBrush(QBrush(QColor("#2277ee")))
         self.setZValue(2)
         self.setVisible(False)
+        # Pins must NOT be independently selectable or movable
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
 
 class ComponentItem(QGraphicsItem):
@@ -67,10 +73,20 @@ class ComponentItem(QGraphicsItem):
         self.params: dict[str, Any] = params or {}
         self.component_id: str = comp_id or str(uuid.uuid4())
 
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        # We implement dragging manually so we can enforce a drag threshold.
+        # ItemIsMovable is intentionally NOT set.
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         self.setAcceptHoverEvents(True)
+
+        # Internal drag state
+        self._drag_start: QPointF | None = None
+        self._drag_orig_pos: QPointF | None = None
+        self._dragging: bool = False
+
+        # Flip state tracked explicitly so serialisation is unambiguous
+        self._flip_h_active: bool = False
+        self._flip_v_active: bool = False
 
         self._pins: dict[str, PinItem] = {}
         self._build_pins()
@@ -164,11 +180,51 @@ class ComponentItem(QGraphicsItem):
         super().hoverLeaveEvent(event)
 
     # ------------------------------------------------------------------
-    # Snap on move
+    # Manual drag implementation (with threshold to prevent jump-on-click)
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.scenePos()
+            self._drag_orig_pos = self.pos()
+            self._dragging = False
+            event.accept()
+        # Allow the default handler to manage selection
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if (
+            self._drag_start is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            delta = event.scenePos() - self._drag_start
+            if not self._dragging:
+                if (abs(delta.x()) + abs(delta.y())) < _DRAG_THRESHOLD:
+                    return  # below threshold – don't start drag yet
+                self._dragging = True
+            assert self._drag_orig_pos is not None
+            new_x = snap(self._drag_orig_pos.x() + delta.x())
+            new_y = snap(self._drag_orig_pos.y() + delta.y())
+            self.setPos(QPointF(new_x, new_y))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        self._drag_start = None
+        self._drag_orig_pos = None
+        self._dragging = False
+        super().mouseReleaseEvent(event)
+
+    # ------------------------------------------------------------------
+    # itemChange – snap externally-set positions (e.g. rebuild_from_circuit)
     # ------------------------------------------------------------------
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+        if (
+            change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
+            and not self._dragging
+        ):
             return QPointF(snap(value.x()), snap(value.y()))
         return super().itemChange(change, value)
 
@@ -178,8 +234,10 @@ class ComponentItem(QGraphicsItem):
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         menu = QMenu()
-        menu.addAction("Rotate CW").triggered.connect(self._rotate_cw)
+        menu.addAction("Rotate CW  (R)").triggered.connect(self._rotate_cw)
         menu.addAction("Rotate CCW").triggered.connect(self._rotate_ccw)
+        menu.addAction("Flip Horizontal  (F)").triggered.connect(self._flip_h)
+        menu.addAction("Flip Vertical  (V)").triggered.connect(self._flip_v)
         menu.addSeparator()
         menu.addAction("Properties…").triggered.connect(self._open_props)
         menu.addSeparator()
@@ -191,6 +249,18 @@ class ComponentItem(QGraphicsItem):
 
     def _rotate_ccw(self) -> None:
         self.setRotation(self.rotation() - 90)
+
+    def _flip_h(self) -> None:
+        """Flip horizontally (mirror about vertical axis)."""
+        self._flip_h_active = not self._flip_h_active
+        t = QTransform(-1, 0, 0, 0, 1, 0, 0, 0, 1) * self.transform()
+        self.setTransform(t)
+
+    def _flip_v(self) -> None:
+        """Flip vertically (mirror about horizontal axis)."""
+        self._flip_v_active = not self._flip_v_active
+        t = QTransform(1, 0, 0, 0, -1, 0, 0, 0, 1) * self.transform()
+        self.setTransform(t)
 
     def _delete_self(self) -> None:
         scene = self.scene()
@@ -222,6 +292,8 @@ class ComponentItem(QGraphicsItem):
             "x": self.pos().x(),
             "y": self.pos().y(),
             "rotation": self.rotation(),
+            "flip_h": self._flip_h_active,
+            "flip_v": self._flip_v_active,
         }
 
 

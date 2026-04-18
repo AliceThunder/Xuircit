@@ -31,10 +31,11 @@ class JunctionItem(QGraphicsEllipseItem):
 
 
 class GroundItem(ComponentItem):
-    """Ground symbol — horizontal lines of decreasing width."""
+    """Ground symbol — horizontal lines of decreasing width.
+    Pin at (0, -20) (on 20 px grid)."""
 
     _WIDTH = 40.0
-    _HEIGHT = 30.0
+    _HEIGHT = 40.0
 
     def __init__(self, ref: str = "GND1", value: str = "",
                  params: dict[str, Any] | None = None,
@@ -42,13 +43,13 @@ class GroundItem(ComponentItem):
         super().__init__("GND", ref, value, params, comp_id)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
-        return {"p": QPointF(0, -15)}
+        return {"p": QPointF(0, -20)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        # Lead down
-        painter.drawLine(QPointF(0, -15), QPointF(0, 0))
+        # Lead down (extended to -20)
+        painter.drawLine(QPointF(0, -20), QPointF(0, 0))
         # Three horizontal bars, decreasing width
         painter.drawLine(QPointF(-16, 0), QPointF(16, 0))
         painter.drawLine(QPointF(-10, 6), QPointF(10, 6))
