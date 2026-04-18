@@ -81,10 +81,11 @@ def _diamond_source(painter: QPainter, w: float = 28, h: float = 20) -> None:
 
 
 class VCVSItem(ComponentItem):
-    """Voltage-controlled voltage source (E element)."""
+    """Voltage-controlled voltage source (E element).
+    Pins at (0, ±40) and (±40, 0) — all on 20 px grid."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 60.0
+    _WIDTH = 80.0
+    _HEIGHT = 80.0
 
     def __init__(self, ref: str = "E1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -93,16 +94,16 @@ class VCVSItem(ComponentItem):
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "+": QPointF(0, -30), "-": QPointF(0, 30),
-            "nc+": QPointF(-30, 0), "nc-": QPointF(30, 0),
+            "+": QPointF(0, -40), "-": QPointF(0, 40),
+            "nc+": QPointF(-40, 0), "nc-": QPointF(40, 0),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         _diamond_source(painter, 26, 26)
-        painter.drawLine(QPointF(0, -30), QPointF(0, -26))
-        painter.drawLine(QPointF(0, 26), QPointF(0, 30))
-        painter.drawLine(QPointF(-30, 0), QPointF(-26, 0))
-        painter.drawLine(QPointF(26, 0), QPointF(30, 0))
+        painter.drawLine(QPointF(0, -40), QPointF(0, -26))
+        painter.drawLine(QPointF(0, 26), QPointF(0, 40))
+        painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
+        painter.drawLine(QPointF(26, 0), QPointF(40, 0))
         painter.setFont(QFont("sans", 7))
         painter.setPen(QPen(QColor("#333")))
         painter.drawText(-5, -8, "+")
@@ -111,10 +112,11 @@ class VCVSItem(ComponentItem):
 
 
 class CCCSItem(ComponentItem):
-    """Current-controlled current source (F element)."""
+    """Current-controlled current source (F element).
+    Pins at (0, ±40) and (±40, 0) — all on 20 px grid."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 60.0
+    _WIDTH = 80.0
+    _HEIGHT = 80.0
 
     def __init__(self, ref: str = "F1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -123,16 +125,16 @@ class CCCSItem(ComponentItem):
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "+": QPointF(0, -30), "-": QPointF(0, 30),
-            "nc+": QPointF(-30, 0), "nc-": QPointF(30, 0),
+            "+": QPointF(0, -40), "-": QPointF(0, 40),
+            "nc+": QPointF(-40, 0), "nc-": QPointF(40, 0),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         _diamond_source(painter, 26, 26)
-        painter.drawLine(QPointF(0, -30), QPointF(0, -26))
-        painter.drawLine(QPointF(0, 26), QPointF(0, 30))
-        painter.drawLine(QPointF(-30, 0), QPointF(-26, 0))
-        painter.drawLine(QPointF(26, 0), QPointF(30, 0))
+        painter.drawLine(QPointF(0, -40), QPointF(0, -26))
+        painter.drawLine(QPointF(0, 26), QPointF(0, 40))
+        painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
+        painter.drawLine(QPointF(26, 0), QPointF(40, 0))
         painter.setFont(QFont("sans", 7))
         painter.setPen(QPen(QColor("#333")))
         painter.drawText(-5, -8, "↑")
@@ -140,10 +142,11 @@ class CCCSItem(ComponentItem):
 
 
 class VCCSItem(ComponentItem):
-    """Voltage-controlled current source (G element)."""
+    """Voltage-controlled current source (G element).
+    Pins at (0, ±40) and (±40, 0) — all on 20 px grid."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 60.0
+    _WIDTH = 80.0
+    _HEIGHT = 80.0
 
     def __init__(self, ref: str = "G1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -152,16 +155,16 @@ class VCCSItem(ComponentItem):
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "+": QPointF(0, -30), "-": QPointF(0, 30),
-            "nc+": QPointF(-30, 0), "nc-": QPointF(30, 0),
+            "+": QPointF(0, -40), "-": QPointF(0, 40),
+            "nc+": QPointF(-40, 0), "nc-": QPointF(40, 0),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         _diamond_source(painter, 26, 26)
-        painter.drawLine(QPointF(0, -30), QPointF(0, -26))
-        painter.drawLine(QPointF(0, 26), QPointF(0, 30))
-        painter.drawLine(QPointF(-30, 0), QPointF(-26, 0))
-        painter.drawLine(QPointF(26, 0), QPointF(30, 0))
+        painter.drawLine(QPointF(0, -40), QPointF(0, -26))
+        painter.drawLine(QPointF(0, 26), QPointF(0, 40))
+        painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
+        painter.drawLine(QPointF(26, 0), QPointF(40, 0))
         painter.setFont(QFont("sans", 7))
         painter.setPen(QPen(QColor("#333")))
         painter.drawText(-5, -8, "↑")
@@ -169,10 +172,11 @@ class VCCSItem(ComponentItem):
 
 
 class CCVSItem(ComponentItem):
-    """Current-controlled voltage source (H element)."""
+    """Current-controlled voltage source (H element).
+    Pins at (0, ±40) and (±40, 0) — all on 20 px grid."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 60.0
+    _WIDTH = 80.0
+    _HEIGHT = 80.0
 
     def __init__(self, ref: str = "H1", value: str = "1",
                  params: dict[str, Any] | None = None,
@@ -181,16 +185,16 @@ class CCVSItem(ComponentItem):
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "+": QPointF(0, -30), "-": QPointF(0, 30),
-            "nc+": QPointF(-30, 0), "nc-": QPointF(30, 0),
+            "+": QPointF(0, -40), "-": QPointF(0, 40),
+            "nc+": QPointF(-40, 0), "nc-": QPointF(40, 0),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         _diamond_source(painter, 26, 26)
-        painter.drawLine(QPointF(0, -30), QPointF(0, -26))
-        painter.drawLine(QPointF(0, 26), QPointF(0, 30))
-        painter.drawLine(QPointF(-30, 0), QPointF(-26, 0))
-        painter.drawLine(QPointF(26, 0), QPointF(30, 0))
+        painter.drawLine(QPointF(0, -40), QPointF(0, -26))
+        painter.drawLine(QPointF(0, 26), QPointF(0, 40))
+        painter.drawLine(QPointF(-40, 0), QPointF(-26, 0))
+        painter.drawLine(QPointF(26, 0), QPointF(40, 0))
         painter.setFont(QFont("sans", 7))
         painter.setPen(QPen(QColor("#333")))
         painter.drawText(-5, -8, "+")

@@ -11,9 +11,9 @@ from .base import ComponentItem, _std_pen
 
 
 class DiodeItem(ComponentItem):
-    """PN diode — triangle + bar."""
+    """PN diode — triangle + bar.  Pins at ±40 (on 20 px grid)."""
 
-    _WIDTH = 50.0
+    _WIDTH = 80.0
     _HEIGHT = 30.0
 
     def __init__(self, ref: str = "D1", value: str = "1N4148",
@@ -22,14 +22,14 @@ class DiodeItem(ComponentItem):
         super().__init__("D", ref, value, params, comp_id)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
-        return {"anode": QPointF(-25, 0), "cathode": QPointF(25, 0)}
+        return {"anode": QPointF(-40, 0), "cathode": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(QBrush(QColor("#333333")))
         # Lead lines
-        painter.drawLine(QPointF(-25, 0), QPointF(-10, 0))
-        painter.drawLine(QPointF(10, 0), QPointF(25, 0))
+        painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
+        painter.drawLine(QPointF(10, 0), QPointF(40, 0))
         # Triangle (anode → cathode direction)
         tri = QPainterPath()
         tri.moveTo(-10, -10)
@@ -43,9 +43,9 @@ class DiodeItem(ComponentItem):
 
 
 class ZenerDiodeItem(ComponentItem):
-    """Zener diode — triangle + bent bar."""
+    """Zener diode — triangle + bent bar.  Pins at ±40 (on 20 px grid)."""
 
-    _WIDTH = 50.0
+    _WIDTH = 80.0
     _HEIGHT = 30.0
 
     def __init__(self, ref: str = "D1", value: str = "BZX55C5V1",
@@ -54,13 +54,13 @@ class ZenerDiodeItem(ComponentItem):
         super().__init__("Z", ref, value, params, comp_id)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
-        return {"anode": QPointF(-25, 0), "cathode": QPointF(25, 0)}
+        return {"anode": QPointF(-40, 0), "cathode": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(QBrush(QColor("#333333")))
-        painter.drawLine(QPointF(-25, 0), QPointF(-10, 0))
-        painter.drawLine(QPointF(10, 0), QPointF(25, 0))
+        painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
+        painter.drawLine(QPointF(10, 0), QPointF(40, 0))
         tri = QPainterPath()
         tri.moveTo(-10, -10)
         tri.lineTo(-10, 10)
@@ -80,17 +80,19 @@ class ZenerDiodeItem(ComponentItem):
 
 
 class _BJTItem(ComponentItem):
-    """Base class for NPN and PNP BJT."""
+    """Base class for NPN and PNP BJT.
+    Pins: base at (-40, 0), collector at (40, -20), emitter at (40, 20).
+    All coordinates are multiples of 20 px (on grid)."""
 
-    _WIDTH = 50.0
+    _WIDTH = 80.0
     _HEIGHT = 60.0
     _IS_NPN: bool = True
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "base": QPointF(-25, 0),
-            "collector": QPointF(25, -20),
-            "emitter": QPointF(25, 20),
+            "base": QPointF(-40, 0),
+            "collector": QPointF(40, -20),
+            "emitter": QPointF(40, 20),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
@@ -98,26 +100,26 @@ class _BJTItem(ComponentItem):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Vertical base line
         painter.drawLine(QPointF(-10, -20), QPointF(-10, 20))
-        # Base lead
-        painter.drawLine(QPointF(-25, 0), QPointF(-10, 0))
+        # Base lead (extended to -40)
+        painter.drawLine(QPointF(-40, 0), QPointF(-10, 0))
         if self._IS_NPN:
-            # Collector line
-            painter.drawLine(QPointF(-10, -12), QPointF(25, -20))
-            # Emitter with arrow (pointing out)
-            painter.drawLine(QPointF(-10, 12), QPointF(25, 20))
+            # Collector line (to pin at 40, -20)
+            painter.drawLine(QPointF(-10, -12), QPointF(40, -20))
+            # Emitter with arrow (pointing out, to pin at 40, 20)
+            painter.drawLine(QPointF(-10, 12), QPointF(40, 20))
             # Arrow on emitter
             arr = QPainterPath()
-            arr.moveTo(25, 20)
-            arr.lineTo(18, 16)
-            arr.lineTo(20, 23)
+            arr.moveTo(40, 20)
+            arr.lineTo(33, 16)
+            arr.lineTo(35, 23)
             arr.closeSubpath()
             painter.setBrush(QBrush(QColor("#111")))
             painter.drawPath(arr)
         else:
             # PNP
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawLine(QPointF(-10, -12), QPointF(25, -20))
-            painter.drawLine(QPointF(-10, 12), QPointF(25, 20))
+            painter.drawLine(QPointF(-10, -12), QPointF(40, -20))
+            painter.drawLine(QPointF(-10, 12), QPointF(40, 20))
             # Arrow on emitter pointing in
             arr = QPainterPath()
             arr.moveTo(-10, 12)
@@ -126,10 +128,6 @@ class _BJTItem(ComponentItem):
             arr.closeSubpath()
             painter.setBrush(QBrush(QColor("#111")))
             painter.drawPath(arr)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(_std_pen())
-        painter.drawLine(QPointF(25, -20), QPointF(25, -25))
-        painter.drawLine(QPointF(25, 20), QPointF(25, 25))
 
 
 class NPNItem(_BJTItem):
@@ -151,36 +149,38 @@ class PNPItem(_BJTItem):
 
 
 class _MOSFETItem(ComponentItem):
-    """Base class for NMOS and PMOS."""
+    """Base class for NMOS and PMOS.
+    Pins: gate at (-40, 0), drain at (40, -20), source at (40, 20), body at (0, 0).
+    All coordinates multiples of 20 px."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 70.0
+    _WIDTH = 80.0
+    _HEIGHT = 60.0
     _IS_N: bool = True
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "gate": QPointF(-30, 0),
-            "drain": QPointF(30, -25),
-            "source": QPointF(30, 25),
+            "gate": QPointF(-40, 0),
+            "drain": QPointF(40, -20),
+            "source": QPointF(40, 20),
             "body": QPointF(0, 0),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        # Gate lead
-        painter.drawLine(QPointF(-30, 0), QPointF(-12, 0))
+        # Gate lead (extended to -40)
+        painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))
         # Gate plate
         painter.drawLine(QPointF(-12, -18), QPointF(-12, 18))
         # Channel plate (with gap)
         painter.drawLine(QPointF(-8, -18), QPointF(-8, -6))
         painter.drawLine(QPointF(-8, -6), QPointF(-8, 6))
         painter.drawLine(QPointF(-8, 6), QPointF(-8, 18))
-        # Source / drain connections
+        # Source / drain connections (extended to ±20 then out to 40)
         painter.drawLine(QPointF(-8, -18), QPointF(8, -18))
         painter.drawLine(QPointF(-8, 18), QPointF(8, 18))
-        painter.drawLine(QPointF(8, -18), QPointF(30, -25))
-        painter.drawLine(QPointF(8, 18), QPointF(30, 25))
+        painter.drawLine(QPointF(8, -18), QPointF(40, -20))
+        painter.drawLine(QPointF(8, 18), QPointF(40, 20))
         painter.drawLine(QPointF(8, -18), QPointF(8, 18))
         # Arrow on body (N: pointing in; P: pointing out)
         arr = QPainterPath()
@@ -195,10 +195,6 @@ class _MOSFETItem(ComponentItem):
         arr.closeSubpath()
         painter.setBrush(QBrush(QColor("#111")))
         painter.drawPath(arr)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(_std_pen())
-        painter.drawLine(QPointF(30, -25), QPointF(30, -30))
-        painter.drawLine(QPointF(30, 25), QPointF(30, 30))
 
 
 class NMOSItem(_MOSFETItem):
@@ -220,10 +216,11 @@ class PMOSItem(_MOSFETItem):
 
 
 class IGBTItem(ComponentItem):
-    """IGBT symbol."""
+    """IGBT symbol.
+    Pins: gate at (-40, 0), collector at (40, -20), emitter at (40, 20)."""
 
-    _WIDTH = 60.0
-    _HEIGHT = 70.0
+    _WIDTH = 80.0
+    _HEIGHT = 60.0
 
     def __init__(self, ref: str = "Q1", value: str = "IRGB4062",
                  params: dict[str, Any] | None = None,
@@ -232,34 +229,30 @@ class IGBTItem(ComponentItem):
 
     def _pin_definitions(self) -> dict[str, QPointF]:
         return {
-            "gate": QPointF(-30, 0),
-            "collector": QPointF(30, -25),
-            "emitter": QPointF(30, 25),
+            "gate": QPointF(-40, 0),
+            "collector": QPointF(40, -20),
+            "emitter": QPointF(40, 20),
         }
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Reuse MOSFET-like body
-        painter.drawLine(QPointF(-30, 0), QPointF(-12, 0))
+        painter.drawLine(QPointF(-40, 0), QPointF(-12, 0))
         painter.drawLine(QPointF(-12, -18), QPointF(-12, 18))
         painter.drawLine(QPointF(-8, -18), QPointF(-8, -6))
         painter.drawLine(QPointF(-8, -6), QPointF(-8, 6))
         painter.drawLine(QPointF(-8, 6), QPointF(-8, 18))
         painter.drawLine(QPointF(-8, -18), QPointF(8, -18))
         painter.drawLine(QPointF(-8, 18), QPointF(8, 18))
-        painter.drawLine(QPointF(8, -18), QPointF(30, -25))
-        painter.drawLine(QPointF(8, 18), QPointF(30, 25))
+        painter.drawLine(QPointF(8, -18), QPointF(40, -20))
+        painter.drawLine(QPointF(8, 18), QPointF(40, 20))
         painter.drawLine(QPointF(8, -18), QPointF(8, 18))
         # Arrow (NPN-like) on emitter
         arr = QPainterPath()
-        arr.moveTo(30, 25)
-        arr.lineTo(23, 21)
-        arr.lineTo(25, 28)
+        arr.moveTo(40, 20)
+        arr.lineTo(33, 16)
+        arr.lineTo(35, 23)
         arr.closeSubpath()
         painter.setBrush(QBrush(QColor("#111")))
         painter.drawPath(arr)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(_std_pen())
-        painter.drawLine(QPointF(30, -25), QPointF(30, -30))
-        painter.drawLine(QPointF(30, 25), QPointF(30, 30))

@@ -11,9 +11,9 @@ from .base import ComponentItem, _std_pen
 
 
 class ResistorItem(ComponentItem):
-    """US-style zigzag resistor symbol."""
+    """US-style zigzag resistor symbol.  Pins at ±40 (on 20 px grid)."""
 
-    _WIDTH = 60.0
+    _WIDTH = 80.0
     _HEIGHT = 20.0
 
     def __init__(self, ref: str = "R1", value: str = "1k",
@@ -22,19 +22,19 @@ class ResistorItem(ComponentItem):
         super().__init__("R", ref, value, params, comp_id)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
-        return {"p": QPointF(-30, 0), "n": QPointF(30, 0)}
+        return {"p": QPointF(-40, 0), "n": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(QBrush(QColor("white")))
         path = QPainterPath()
-        path.moveTo(-30, 0)
+        path.moveTo(-40, 0)
         path.lineTo(-12, 0)
         zx = [-12, -9, -6, -3, 0, 3, 6, 9, 12]
         zy = [0, -8, 8, -8, 8, -8, 8, -8, 0]
         for x, y in zip(zx, zy):
             path.lineTo(x, y)
-        path.lineTo(30, 0)
+        path.lineTo(40, 0)
         painter.drawPath(path)
 
 
@@ -66,9 +66,9 @@ class CapacitorItem(ComponentItem):
 
 
 class InductorItem(ComponentItem):
-    """Inductor — series of arcs."""
+    """Inductor — series of arcs.  Pins at ±40 (on 20 px grid)."""
 
-    _WIDTH = 60.0
+    _WIDTH = 80.0
     _HEIGHT = 24.0
 
     def __init__(self, ref: str = "L1", value: str = "10u",
@@ -77,13 +77,13 @@ class InductorItem(ComponentItem):
         super().__init__("L", ref, value, params, comp_id)
 
     def _pin_definitions(self) -> dict[str, QPointF]:
-        return {"p": QPointF(-30, 0), "n": QPointF(30, 0)}
+        return {"p": QPointF(-40, 0), "n": QPointF(40, 0)}
 
     def _draw_symbol(self, painter: QPainter) -> None:
         painter.setPen(_std_pen())
         painter.setBrush(QBrush(QColor("white")))
-        painter.drawLine(QPointF(-30, 0), QPointF(-18, 0))
-        painter.drawLine(QPointF(18, 0), QPointF(30, 0))
+        painter.drawLine(QPointF(-40, 0), QPointF(-18, 0))
+        painter.drawLine(QPointF(18, 0), QPointF(40, 0))
         path = QPainterPath()
         path.moveTo(-18, 0)
         for cx in [-12.0, -4.0, 4.0, 12.0]:

@@ -15,6 +15,9 @@ from ..components.wire import WireItem
 from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
+# Snap radius: within this many pixels of a pin the wire snaps to it.
+_PIN_SNAP_RADIUS = GRID_SIZE * 0.8
+
 
 class SceneMode(Enum):
     SELECT = auto()
@@ -75,6 +78,18 @@ def create_component_item(
     params: dict[str, Any] | None = None,
     comp_id: str | None = None,
 ) -> ComponentItem | None:
+    # Check user-defined components first
+    try:
+        from ..models.user_library import UserLibrary
+        ulib = UserLibrary()
+        udef = ulib.get(comp_type)
+        if udef is not None:
+            from ..components.user_component import UserComponentItem
+            return UserComponentItem(udef, ref=ref, value=value,
+                                     params=params or {}, comp_id=comp_id)
+    except Exception:
+        pass
+
     cls = _registry().get(comp_type)
     if cls is None:
         return None
@@ -101,6 +116,9 @@ class CircuitScene(QGraphicsScene):
         self._wire_start_pin: tuple[str, str] | None = None
         self._temp_wire: WireItem | None = None
 
+        # Grid visibility flag (False during export)
+        self._show_grid: bool = True
+
         self.setBackgroundBrush(QColor("#f8f8f8"))
         self.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.selectionChanged.connect(self._on_selection_changed)
@@ -126,7 +144,6 @@ class CircuitScene(QGraphicsScene):
         item = create_component_item(comp_type, ref="?")
         if item:
             item.setOpacity(0.5)
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
             self.addItem(item)
             self._ghost = item
@@ -164,12 +181,14 @@ class CircuitScene(QGraphicsScene):
         if self._mode == SceneMode.PLACE_COMPONENT and self._ghost:
             self._ghost.setPos(snapped)
         elif self._mode == SceneMode.DRAW_WIRE and self._wire_start:
+            # Snap endpoint to nearby pin if available
+            effective_end, _ = self._nearest_pin(snapped)
             if self._temp_wire is None:
-                wire = WireItem(self._wire_start, snapped)
+                wire = WireItem(self._wire_start, effective_end)
                 self.addItem(wire)
                 self._temp_wire = wire
             else:
-                self._temp_wire.update_endpoints(self._wire_start, snapped)
+                self._temp_wire.update_endpoints(self._wire_start, effective_end)
 
         super().mouseMoveEvent(event)
 
@@ -187,16 +206,29 @@ class CircuitScene(QGraphicsScene):
 
     def _place_component(self, pos: QPointF) -> None:
         from ..models.component_library import ComponentLibrary
+        from ..models.user_library import UserLibrary
         lib = ComponentLibrary()
         cdef = lib.get(self._pending_type)
-        if cdef is None:
+        ulib = UserLibrary()
+        udef = ulib.get(self._pending_type)
+
+        if cdef is None and udef is None:
             return
 
-        ref = self.circuit.next_ref(cdef.ref_prefix)
+        if cdef is not None:
+            ref = self.circuit.next_ref(cdef.ref_prefix)
+            default_value = cdef.default_value
+            default_params = dict(cdef.default_params)
+        else:
+            assert udef is not None
+            ref = self.circuit.next_ref(udef.ref_prefix)
+            default_value = udef.default_value
+            default_params = {}
+
         comp_id = str(uuid.uuid4())
         item = create_component_item(
             self._pending_type, ref=ref,
-            value=cdef.default_value, params=dict(cdef.default_params),
+            value=default_value, params=default_params,
             comp_id=comp_id,
         )
         if item is None:
@@ -208,8 +240,8 @@ class CircuitScene(QGraphicsScene):
             "id": comp_id,
             "type": self._pending_type,
             "ref": ref,
-            "value": cdef.default_value,
-            "params": dict(cdef.default_params),
+            "value": default_value,
+            "params": default_params,
             "x": pos.x(),
             "y": pos.y(),
             "rotation": 0,
@@ -222,16 +254,22 @@ class CircuitScene(QGraphicsScene):
     # ------------------------------------------------------------------
 
     def _wire_click(self, pos: QPointF) -> None:
-        if self._wire_start is None:
-            self._wire_start = pos
-            self._wire_start_pin = self._pin_at(pos)
-        else:
-            self._finish_wire(pos)
+        # Prefer snapping to a nearby pin over raw grid position
+        pin_pos, pin_info = self._nearest_pin(pos)
+        actual = pin_pos if pin_pos is not None else pos
 
-    def _finish_wire(self, end: QPointF) -> None:
+        if self._wire_start is None:
+            self._wire_start = actual
+            self._wire_start_pin = pin_info
+        else:
+            self._finish_wire(actual, pin_info)
+
+    def _finish_wire(self, end: QPointF,
+                     end_pin: tuple[str, str] | None = None) -> None:
         if self._wire_start is None:
             return
-        end_pin = self._pin_at(end)
+        if end_pin is None:
+            end_pin = self._pin_at(end)
 
         if self._temp_wire:
             self._temp_wire.update_endpoints(self._wire_start, end)
@@ -261,6 +299,36 @@ class CircuitScene(QGraphicsScene):
                     return (parent.component_id, item.pin_name)
         return None
 
+    def _nearest_pin(
+        self, pos: QPointF, radius: float = _PIN_SNAP_RADIUS
+    ) -> tuple[QPointF | None, tuple[str, str] | None]:
+        """Find the nearest pin within *radius* scene pixels.
+
+        Returns (scene_pos, (comp_id, pin_name)) or (None, None).
+        """
+        best_d2 = radius * radius
+        best_pos: QPointF | None = None
+        best_info: tuple[str, str] | None = None
+
+        search = QRectF(
+            pos.x() - radius, pos.y() - radius,
+            2 * radius, 2 * radius,
+        )
+        for item in self.items(search):
+            if not isinstance(item, ComponentItem):
+                continue
+            for pin_name, pin in item._pins.items():
+                sp = item.mapToScene(pin.pos())
+                dx = sp.x() - pos.x()
+                dy = sp.y() - pos.y()
+                d2 = dx * dx + dy * dy
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_pos = sp
+                    best_info = (item.component_id, pin_name)
+
+        return best_pos, best_info
+
     # ------------------------------------------------------------------
     # Ghost
     # ------------------------------------------------------------------
@@ -276,7 +344,8 @@ class CircuitScene(QGraphicsScene):
 
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawBackground(painter, rect)
-        draw_grid(painter, rect)
+        if self._show_grid:
+            draw_grid(painter, rect)
 
     # ------------------------------------------------------------------
     # Selection
@@ -305,6 +374,17 @@ class CircuitScene(QGraphicsScene):
             if item:
                 item.setPos(comp.get("x", 0), comp.get("y", 0))
                 item.setRotation(comp.get("rotation", 0))
+                # Restore flip state
+                from PyQt6.QtGui import QTransform
+                fh = comp.get("flip_h", False)
+                fv = comp.get("flip_v", False)
+                if fh or fv:
+                    t = QTransform(
+                        -1.0 if fh else 1.0, 0, 0,
+                        0, -1.0 if fv else 1.0, 0,
+                        0, 0, 1,
+                    )
+                    item.setTransform(t)
                 self.addItem(item)
 
         for wire_data in self.circuit.wires:
@@ -349,5 +429,19 @@ class CircuitScene(QGraphicsScene):
                 elif isinstance(item, WireItem):
                     self.circuit.remove_wire(item.wire_id)
                 self.removeItem(item)
+        elif key == Qt.Key.Key_R:
+            for item in self.selectedItems():
+                if isinstance(item, ComponentItem):
+                    item._rotate_cw()
+        elif key == Qt.Key.Key_F:
+            for item in self.selectedItems():
+                if isinstance(item, ComponentItem):
+                    item._flip_h()
+        elif key == Qt.Key.Key_V:
+            for item in self.selectedItems():
+                if isinstance(item, ComponentItem):
+                    item._flip_v()
+        elif key == Qt.Key.Key_Escape:
+            self.set_mode(SceneMode.SELECT)
         else:
             super().keyPressEvent(event)

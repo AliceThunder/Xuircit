@@ -147,6 +147,20 @@ class MainWindow(QMainWindow):
         )
         tools_menu.addAction(self._act_select_mode)
         tools_menu.addAction(self._act_wire_mode)
+        tools_menu.addSeparator()
+        tools_menu.addAction(self._action(
+            "Rotate Selected CW  (R)", callback=self._rotate_selected_cw))
+        tools_menu.addAction(self._action(
+            "Flip Selected Horizontal  (F)", callback=self._flip_selected_h))
+        tools_menu.addAction(self._action(
+            "Flip Selected Vertical  (V)", callback=self._flip_selected_v))
+
+        # Library
+        lib_menu = mb.addMenu("&Library")
+        lib_menu.addAction(self._action(
+            "Manage User Components…",
+            callback=self._manage_user_library,
+        ))
 
         # Help
         help_menu = mb.addMenu("&Help")
@@ -346,6 +360,32 @@ class MainWindow(QMainWindow):
             self._scene.removeItem(item)
         self._modified = True
         self._update_title()
+
+    def _rotate_selected_cw(self) -> None:
+        for item in self._scene.selectedItems():
+            if isinstance(item, ComponentItem):
+                item._rotate_cw()
+
+    def _flip_selected_h(self) -> None:
+        for item in self._scene.selectedItems():
+            if isinstance(item, ComponentItem):
+                item._flip_h()
+
+    def _flip_selected_v(self) -> None:
+        for item in self._scene.selectedItems():
+            if isinstance(item, ComponentItem):
+                item._flip_v()
+
+    # ------------------------------------------------------------------
+    # Library
+    # ------------------------------------------------------------------
+
+    def _manage_user_library(self) -> None:
+        from ..dialogs.user_component_editor import UserLibraryManagerDialog
+        dlg = UserLibraryManagerDialog(self)
+        dlg.exec()
+        # Refresh palette after any changes
+        self._palette._populate(self._palette._search.text())
 
     # ------------------------------------------------------------------
     # About
