@@ -113,6 +113,7 @@ class ComponentItem(QGraphicsItem):
         value: str = "",
         params: dict[str, Any] | None = None,
         comp_id: str | None = None,
+        library_id: str | None = None,
     ) -> None:
         super().__init__()
         self.comp_type = comp_type
@@ -120,6 +121,7 @@ class ComponentItem(QGraphicsItem):
         self.value = value
         self.params: dict[str, Any] = params or {}
         self.component_id: str = comp_id or str(uuid.uuid4())
+        self.library_id: str | None = library_id
 
         # We implement dragging manually so we can enforce a drag threshold.
         # ItemIsMovable is intentionally NOT set.
@@ -284,10 +286,15 @@ class ComponentItem(QGraphicsItem):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        was_dragging = self._dragging
         self._drag_start = None
         self._drag_orig_pos = None
         self._dragging = False
         super().mouseReleaseEvent(event)
+        if was_dragging:
+            scene = self.scene()
+            if hasattr(scene, "_rebuild_auto_wires"):
+                scene._rebuild_auto_wires()  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
     # itemChange – snap externally-set positions (e.g. rebuild_from_circuit)
@@ -321,11 +328,13 @@ class ComponentItem(QGraphicsItem):
         self.setRotation(self.rotation() + 90)
         self._rotate_label_offset(self._ref_label)
         self._rotate_label_offset(self._val_label)
+        self._notify_scene_changed()
 
     def _rotate_ccw(self) -> None:
         self.setRotation(self.rotation() - 90)
         self._rotate_label_offset_ccw(self._ref_label)
         self._rotate_label_offset_ccw(self._val_label)
+        self._notify_scene_changed()
 
     def _flip_h(self) -> None:
         """Flip horizontally (mirror about vertical axis)."""
@@ -334,6 +343,7 @@ class ComponentItem(QGraphicsItem):
         self.setTransform(t)
         self._flip_label_h(self._ref_label)
         self._flip_label_h(self._val_label)
+        self._notify_scene_changed()
 
     def _flip_v(self) -> None:
         """Flip vertically (mirror about horizontal axis)."""
@@ -342,11 +352,23 @@ class ComponentItem(QGraphicsItem):
         self.setTransform(t)
         self._flip_label_v(self._ref_label)
         self._flip_label_v(self._val_label)
+        self._notify_scene_changed()
+
+    def _notify_scene_changed(self) -> None:
+        """Notify the scene that this component changed so auto-wires rebuild."""
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "_rebuild_auto_wires"):
+            scene._rebuild_auto_wires()  # type: ignore[union-attr]
 
     def _delete_self(self) -> None:
         scene = self.scene()
         if scene:
+            if hasattr(scene, "circuit") and hasattr(scene.circuit, "remove_component"):
+                scene.circuit.remove_component(  # type: ignore[union-attr]
+                    self.component_id)
             scene.removeItem(self)
+            if hasattr(scene, "_rebuild_auto_wires"):
+                scene._rebuild_auto_wires()  # type: ignore[union-attr]
 
     def _open_props(self) -> None:
         _open_properties(self)
@@ -364,7 +386,7 @@ class ComponentItem(QGraphicsItem):
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.component_id,
             "type": self.comp_type,
             "ref": self.ref,
@@ -380,6 +402,9 @@ class ComponentItem(QGraphicsItem):
             "label_val_pos": [self._val_label.pos().x(),
                                self._val_label.pos().y()],
         }
+        if self.library_id is not None:
+            d["library_id"] = self.library_id
+        return d
 
 
 # ------------------------------------------------------------------

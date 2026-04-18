@@ -2,24 +2,22 @@
 
 Format overview
 ---------------
-The XCIT format extends a standard SPICE netlist with two optional sections:
+The XCIT format extends a standard SPICE netlist with one optional section:
 
   .xcit_layout
-      One line per component: ``ref  x  y  rotation  flip_h  flip_v``
+      One line per component:
+      ``ref  x  y  rotation  flip_h  flip_v  library_id
+        label_ref_dx  label_ref_dy  label_val_dx  label_val_dy``
   .end_xcit_layout
 
-  .xcit_wires
-      One line per wire:
-      ``id  start_x  start_y  end_x  end_y  start_comp  start_pin  end_comp  end_pin  net``
-  .end_xcit_wires
+The section is placed between the last element line and the ``.end``
+directive.  A standard SPICE simulator will reject the section header as
+an unknown directive but will otherwise ignore it (most simulators skip
+unknown directives rather than aborting).
 
-Both sections are placed between the last element line and the ``.end``
-directive.  A standard SPICE simulator will reject the section headers as
-unknown directives but will otherwise ignore them because they begin with ``.``
-(most simulators skip unknown directives rather than aborting).
-
-Stripping the two sections with :func:`strip_positions` yields a valid SPICE
-netlist that any simulator can use.
+Wires are NOT saved — they are automatically redrawn when the netlist is
+loaded.  Stripping the section with :func:`strip_positions` yields a
+valid SPICE netlist.
 """
 from __future__ import annotations
 
@@ -86,9 +84,10 @@ def _build_net_map(circuit: Circuit) -> dict[tuple[str, str], str]:
 def generate_xcit_netlist(circuit: Circuit) -> str:
     """Generate an XCIT extended netlist string from the circuit model.
 
-    The output is a valid SPICE netlist with embedded ``.xcit_layout`` and
-    ``.xcit_wires`` sections that record each component's position, rotation,
-    and flip state, plus every wire's geometry and pin connections.
+    The output is a valid SPICE netlist with an embedded ``.xcit_layout``
+    section that records each component's position, rotation, flip state,
+    and library reference.  Wire data is NOT included — wires are
+    auto-generated on load.
     """
     lines: list[str] = []
     lines.append("* Xuircit Extended Netlist (XCIT)")
@@ -96,14 +95,14 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         f"* Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
     )
     lines.append(
-        "* Strip .xcit_layout and .xcit_wires sections for standard SPICE."
+        "* Strip .xcit_layout section for standard SPICE."
     )
     lines.append("")
 
     net_map = _build_net_map(circuit)
 
-    from ..models.component_library import ComponentLibrary
-    lib = ComponentLibrary()
+    from ..models.library_system import LibraryManager
+    lm = LibraryManager()
 
     # ── SPICE element lines ──────────────────────────────────────────────
     for comp in circuit.components:
@@ -116,9 +115,15 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         value = comp.get("value", "1")
         params = comp.get("params", {})
         comp_id = comp.get("id", "")
+        lib_id = comp.get("library_id")
 
-        cdef = lib.get(ctype)
-        pin_names = cdef.pins if cdef else []
+        result = lm.find_entry(ctype, lib_id)
+        pin_names: list[str] = []
+        if result is not None:
+            entry, _ = result
+            pin_names = entry.pin_names if entry.is_builtin else [
+                p.get("name", "") for p in entry.pins
+            ]
 
         node_tokens: list[str] = []
         for pin in pin_names:
@@ -140,8 +145,8 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
     # ── Layout section ───────────────────────────────────────────────────
     lines.append(".xcit_layout")
     lines.append(
-        "* ref  x  y  rotation  flip_h  flip_v  label_ref_dx  label_ref_dy"
-        "  label_val_dx  label_val_dy"
+        "* ref  x  y  rotation  flip_h  flip_v  library_id"
+        "  label_ref_dx  label_ref_dy  label_val_dx  label_val_dy"
     )
     for comp in circuit.components:
         ref = comp.get("ref", "X1")
@@ -150,33 +155,14 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         rot = comp.get("rotation", 0)
         fh = 1 if comp.get("flip_h", False) else 0
         fv = 1 if comp.get("flip_v", False) else 0
+        lib_id = comp.get("library_id", "preset")
         lrp = comp.get("label_ref_pos", [0.0, -22.0])
         lvp = comp.get("label_val_pos", [0.0, 14.0])
         lines.append(
-            f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}"
+            f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}"
             f"  {lrp[0]:.2f}  {lrp[1]:.2f}  {lvp[0]:.2f}  {lvp[1]:.2f}"
         )
     lines.append(".end_xcit_layout")
-    lines.append("")
-
-    # ── Wires section ────────────────────────────────────────────────────
-    lines.append(".xcit_wires")
-    lines.append(
-        "* id  start_x  start_y  end_x  end_y"
-        "  start_comp  start_pin  end_comp  end_pin  net"
-    )
-    for wire in circuit.wires:
-        wid = wire.get("id", str(uuid.uuid4()))
-        sx, sy = wire.get("start", [0.0, 0.0])
-        ex, ey = wire.get("end", [0.0, 0.0])
-        sp = wire.get("start_pin") or ["", ""]
-        ep = wire.get("end_pin") or ["", ""]
-        net = wire.get("net_name", "")
-        lines.append(
-            f"{wid}  {sx:.2f}  {sy:.2f}  {ex:.2f}  {ey:.2f}"
-            f"  {sp[0]}  {sp[1]}  {ep[0]}  {ep[1]}  {net}"
-        )
-    lines.append(".end_xcit_wires")
     lines.append("")
 
     lines.append(".end")
@@ -184,10 +170,9 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
 
 
 def strip_positions(xcit_text: str) -> str:
-    """Remove the .xcit_layout and .xcit_wires sections from an XCIT netlist.
+    """Remove the .xcit_layout section from an XCIT netlist.
 
     Returns a standard SPICE netlist string that any simulator can parse.
-    The first comment line is updated to reflect that positions were stripped.
     """
     in_section = False
     result: list[str] = []
@@ -201,14 +186,13 @@ def strip_positions(xcit_text: str) -> str:
             continue
         if not in_section:
             result.append(line)
-    # Replace the extended-format header comment if present
     text = "\n".join(result)
     text = text.replace(
         "* Xuircit Extended Netlist (XCIT)",
         "* Xuircit schematic netlist",
     )
     text = text.replace(
-        "* Strip .xcit_layout and .xcit_wires sections for standard SPICE.\n",
+        "* Strip .xcit_layout section for standard SPICE.\n",
         "",
     )
     return text
@@ -216,42 +200,41 @@ def strip_positions(xcit_text: str) -> str:
 
 def parse_xcit_netlist(
     text: str,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Parse an XCIT netlist.
 
-    Returns a 3-tuple:
-    - ``components``: list of component dicts (as from netlist_parser.parse_netlist)
+    Returns a 2-tuple:
+    - ``components``: list of component dicts (from netlist_parser.parse_netlist)
     - ``positions``: mapping ref → position dict
-      ``{x, y, rotation, flip_h, flip_v, label_ref_pos, label_val_pos}``
-    - ``wires``: list of wire dicts
+      ``{x, y, rotation, flip_h, flip_v, library_id, label_ref_pos, label_val_pos}``
+
+    Wire data is not returned — wires are auto-generated on rebuild.
     """
     from ..io.netlist_parser import parse_netlist
 
     spice_lines: list[str] = []
     layout_lines: list[str] = []
-    wire_lines: list[str] = []
     state = "spice"
 
     for line in text.splitlines():
         stripped = line.strip().lower()
-        if stripped == ".xcit_layout":
+        if stripped in (".xcit_layout",):
             state = "layout"
             continue
-        if stripped == ".end_xcit_layout":
+        if stripped in (".end_xcit_layout",):
             state = "spice"
             continue
-        if stripped == ".xcit_wires":
-            state = "wires"
+        # Skip legacy wire sections silently
+        if stripped in (".xcit_wires",):
+            state = "skip"
             continue
-        if stripped == ".end_xcit_wires":
+        if stripped in (".end_xcit_wires",):
             state = "spice"
             continue
         if state == "spice":
             spice_lines.append(line)
         elif state == "layout":
             layout_lines.append(line)
-        elif state == "wires":
-            wire_lines.append(line)
 
     components = parse_netlist("\n".join(spice_lines))
 
@@ -269,8 +252,16 @@ def parse_xcit_netlist(
             rot = float(parts[3])
             fh = bool(int(parts[4]))
             fv = bool(int(parts[5]))
-            lrp = [float(parts[6]), float(parts[7])] if len(parts) >= 8 else [0.0, -22.0]
-            lvp = [float(parts[8]), float(parts[9])] if len(parts) >= 10 else [0.0, 14.0]
+            # library_id is in field 6 (new format) — optional
+            idx = 6
+            lib_id: str | None = None
+            if len(parts) > idx and not _is_float(parts[idx]):
+                lib_id = parts[idx]
+                idx += 1
+            lrp = [float(parts[idx]), float(parts[idx + 1])] \
+                if len(parts) >= idx + 2 else [0.0, -22.0]
+            lvp = [float(parts[idx + 2]), float(parts[idx + 3])] \
+                if len(parts) >= idx + 4 else [0.0, 14.0]
         except (ValueError, IndexError):
             continue
         positions[ref] = {
@@ -278,36 +269,18 @@ def parse_xcit_netlist(
             "rotation": rot,
             "flip_h": fh,
             "flip_v": fv,
+            "library_id": lib_id,
             "label_ref_pos": lrp,
             "label_val_pos": lvp,
         }
 
-    wires: list[dict[str, Any]] = []
-    for line in wire_lines:
-        line = line.strip()
-        if not line or line.startswith("*"):
-            continue
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        try:
-            wid = parts[0]
-            sx, sy = float(parts[1]), float(parts[2])
-            ex, ey = float(parts[3]), float(parts[4])
-            start_comp = parts[5] if len(parts) > 5 else ""
-            start_pin = parts[6] if len(parts) > 6 else ""
-            end_comp = parts[7] if len(parts) > 7 else ""
-            end_pin = parts[8] if len(parts) > 8 else ""
-            net = parts[9] if len(parts) > 9 else ""
-        except (ValueError, IndexError):
-            continue
-        wires.append({
-            "id": wid,
-            "start": [sx, sy],
-            "end": [ex, ey],
-            "start_pin": [start_comp, start_pin] if start_comp else None,
-            "end_pin": [end_comp, end_pin] if end_comp else None,
-            "net_name": net,
-        })
+    return components, positions
 
-    return components, positions, wires
+
+def _is_float(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
