@@ -17,6 +17,13 @@ from ..components.wire import WireItem
 from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
+class SceneMode(Enum):
+    """Operating modes for the circuit scene."""
+    SELECT = auto()
+    PLACE_COMPONENT = auto()
+    DRAW_WIRE = auto()
+
+
 # Snap radius: within this many pixels of a pin the wire snaps to it.
 _PIN_SNAP_RADIUS = GRID_SIZE * 0.8
 # Tolerance for treating two coordinates as equal (used for aligned-pin detection).
