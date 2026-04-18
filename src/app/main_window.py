@@ -93,14 +93,18 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         mb = self.menuBar()
 
+        # Feature #4: load user shortcuts from settings
+        from ..app.settings import AppSettings
+        _sc = AppSettings().shortcut  # shorthand
+
         # File
         file_menu = mb.addMenu("&File")
-        self._act_new = self._action("&New", "Ctrl+N", self._new)
-        self._act_open = self._action("&Open…", "Ctrl+O", self._open)
-        self._act_save = self._action("&Save", "Ctrl+S", self._save)
-        self._act_save_as = self._action("Save &As…", "Ctrl+Shift+S", self._save_as)
+        self._act_new = self._action("&New", _sc("file.new"), self._new)
+        self._act_open = self._action("&Open…", _sc("file.open"), self._open)
+        self._act_save = self._action("&Save", _sc("file.save"), self._save)
+        self._act_save_as = self._action("Save &As…", _sc("file.save_as"), self._save_as)
         self._act_import = self._action("Import &Netlist…", callback=self._import_netlist)
-        self._act_exit = self._action("E&xit", "Alt+F4", self.close)
+        self._act_exit = self._action("E&xit", _sc("file.exit"), self.close)
 
         export_menu = file_menu.addMenu("&Export")
         self._action("Export as &PNG…",
@@ -130,11 +134,11 @@ class MainWindow(QMainWindow):
         # Edit
         edit_menu = mb.addMenu("&Edit")
         self._act_undo = self._undo_stack.createUndoAction(self, "&Undo")
-        self._act_undo.setShortcut("Ctrl+Z")
+        self._act_undo.setShortcut(_sc("edit.undo"))
         self._act_redo = self._undo_stack.createRedoAction(self, "&Redo")
-        self._act_redo.setShortcut("Ctrl+Y")
-        self._act_select_all = self._action("Select &All", "Ctrl+A", self._select_all)
-        self._act_delete = self._action("&Delete Selected", "Del", self._delete_selected)
+        self._act_redo.setShortcut(_sc("edit.redo"))
+        self._act_select_all = self._action("Select &All", _sc("edit.select_all"), self._select_all)
+        self._act_delete = self._action("&Delete Selected", _sc("edit.delete"), self._delete_selected)
         for act in (self._act_undo, self._act_redo, None,
                     self._act_select_all, self._act_delete):
             if act is None:
@@ -144,9 +148,9 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("&View")
-        self._act_zoom_in = self._action("Zoom &In", "Ctrl++", self._view.zoom_in)
-        self._act_zoom_out = self._action("Zoom &Out", "Ctrl+-", self._view.zoom_out)
-        self._act_fit = self._action("&Fit All", "Ctrl+0", self._view.fit_all)
+        self._act_zoom_in = self._action("Zoom &In", _sc("view.zoom_in"), self._view.zoom_in)
+        self._act_zoom_out = self._action("Zoom &Out", _sc("view.zoom_out"), self._view.zoom_out)
+        self._act_fit = self._action("&Fit All", _sc("view.fit_all"), self._view.fit_all)
         for act in (self._act_zoom_in, self._act_zoom_out, self._act_fit):
             view_menu.addAction(act)
         view_menu.addSeparator()
@@ -158,7 +162,7 @@ class MainWindow(QMainWindow):
         # Tools
         tools_menu = mb.addMenu("&Tools")
         self._act_select_mode = self._action(
-            "&Select", "Escape",
+            "&Select", _sc("tools.select"),
             lambda: self._scene.set_mode(SceneMode.SELECT),
             checkable=True, checked=True,
         )
@@ -167,11 +171,14 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self._act_select_mode)
         tools_menu.addSeparator()
         tools_menu.addAction(self._action(
-            "Rotate Selected CW  (R)", callback=self._rotate_selected_cw))
+            "Rotate Selected CW  (R)", _sc("tools.rotate_cw"),
+            callback=self._rotate_selected_cw))
         tools_menu.addAction(self._action(
-            "Flip Selected Horizontal  (F)", callback=self._flip_selected_h))
+            "Flip Selected Horizontal  (F)", _sc("tools.flip_h"),
+            callback=self._flip_selected_h))
         tools_menu.addAction(self._action(
-            "Flip Selected Vertical  (V)", callback=self._flip_selected_v))
+            "Flip Selected Vertical  (V)", _sc("tools.flip_v"),
+            callback=self._flip_selected_v))
 
         # Library
         lib_menu = mb.addMenu("&Library")
