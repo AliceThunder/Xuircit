@@ -78,31 +78,33 @@ class _SymbolScene(QGraphicsScene):
         pos = event.scenePos()
         sx, sy = snap_to_grid(pos.x(), pos.y())
         snapped = QPointF(sx, sy)
+        # Pins must snap to grid; other drawing tools support arbitrary positions.
+        draw_pos = snapped if self._tool == "pin" else pos
 
         if self._tool == "pin":
             self._place_pin(snapped)
         elif self._tool == "line":
             if self._line_start is None:
-                self._line_start = snapped
+                self._line_start = draw_pos
             else:
                 # Issue 3 fix: reset start to None (independent lines, not chains)
                 cmd = SymbolCmd("line",
                                 x1=self._line_start.x(), y1=self._line_start.y(),
-                                x2=snapped.x(), y2=snapped.y())
+                                x2=draw_pos.x(), y2=draw_pos.y())
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
                 self.addLine(self._line_start.x(), self._line_start.y(),
-                             snapped.x(), snapped.y(), pen)
+                             draw_pos.x(), draw_pos.y(), pen)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
                 self._line_start = None  # end line; don't chain
         elif self._tool == "rect":
             if self._line_start is None:
-                self._line_start = snapped
+                self._line_start = draw_pos
             else:
                 x1, y1 = self._line_start.x(), self._line_start.y()
-                x2, y2 = snapped.x(), snapped.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 cmd = SymbolCmd("rect", x1=rx, y1=ry, w=w, h=h)
@@ -115,10 +117,10 @@ class _SymbolScene(QGraphicsScene):
                 self._line_start = None
         elif self._tool == "ellipse":
             if self._line_start is None:
-                self._line_start = snapped
+                self._line_start = draw_pos
             else:
                 x1, y1 = self._line_start.x(), self._line_start.y()
-                x2, y2 = snapped.x(), snapped.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 # Store as ellipse cmd: x1/y1 = top-left, w/h = bounding rect dims
@@ -136,8 +138,8 @@ class _SymbolScene(QGraphicsScene):
 
     def mouseMoveEvent(self, event: Any) -> None:
         pos = event.scenePos()
-        sx, sy = snap_to_grid(pos.x(), pos.y())
-        snapped = QPointF(sx, sy)
+        # Non-pin tools use raw position for free-form drawing (Issue 4).
+        draw_pos = pos if self._tool != "pin" else pos
         if self._line_start is not None and self._tool in ("line", "rect",
                                                             "ellipse"):
             if self._temp_item:
@@ -146,17 +148,17 @@ class _SymbolScene(QGraphicsScene):
             if self._tool == "line":
                 self._temp_item = self.addLine(
                     self._line_start.x(), self._line_start.y(),
-                    snapped.x(), snapped.y(), pen)
+                    draw_pos.x(), draw_pos.y(), pen)
             elif self._tool == "rect":
                 x1, y1 = self._line_start.x(), self._line_start.y()
-                x2, y2 = snapped.x(), snapped.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addRect(
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
             else:  # ellipse
                 x1, y1 = self._line_start.x(), self._line_start.y()
-                x2, y2 = snapped.x(), snapped.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addEllipse(

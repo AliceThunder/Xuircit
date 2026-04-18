@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QDrag
+from PyQt6.QtCore import QMimeData
 from PyQt6.QtWidgets import (
     QDockWidget,
     QLabel,
@@ -15,6 +17,25 @@ from PyQt6.QtWidgets import (
 )
 
 from ..models.library_system import LibraryManager
+
+
+class _DraggableTree(QTreeWidget):
+    """QTreeWidget that initiates a drag carrying the component type string."""
+
+    def startDrag(self, supported_actions: Qt.DropAction) -> None:  # type: ignore[override]
+        item = self.currentItem()
+        if item is None:
+            return
+        comp_type: str | None = item.data(0, Qt.ItemDataRole.UserRole)
+        if not comp_type:
+            return
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(
+            "application/x-xuircit-component", comp_type.encode("utf-8")
+        )
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
 
 class ComponentPalette(QDockWidget):
@@ -45,9 +66,10 @@ class ComponentPalette(QDockWidget):
         layout.addWidget(self._search)
 
         # Tree
-        self._tree = QTreeWidget()
+        self._tree = _DraggableTree()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
+        self._tree.setDragEnabled(True)
         layout.addWidget(self._tree)
 
         # Button row

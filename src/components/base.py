@@ -98,11 +98,16 @@ class LabelItem(QGraphicsSimpleTextItem):
         import math
 
         wt = painter.worldTransform()
-        # Rotation angle of the item in device space (degrees, CW positive).
-        angle_deg = math.degrees(math.atan2(wt.m12(), wt.m11()))
         # Determinant < 0 means an odd number of reflections are applied.
         det = wt.m11() * wt.m22() - wt.m12() * wt.m21()
         has_reflection = det < 0
+        # Rotation angle of the item in device space (degrees, CW positive).
+        # When a reflection is present, atan2(m12, m11) returns θ + 180° instead
+        # of the true visual rotation θ.  Negate both arguments to recover θ.
+        if has_reflection:
+            angle_deg = math.degrees(math.atan2(-wt.m12(), -wt.m11()))
+        else:
+            angle_deg = math.degrees(math.atan2(wt.m12(), wt.m11()))
 
         br_text = QGraphicsSimpleTextItem.boundingRect(self)
         w, h = br_text.width(), br_text.height()
@@ -286,6 +291,17 @@ class ComponentItem(QGraphicsItem):
             self._drag_start = event.scenePos()
             self._drag_orig_pos = self.pos()
             self._dragging = False
+            # Capture before-state for undo (used in mouseReleaseEvent)
+            scene = self.scene()
+            if (
+                scene is not None
+                and hasattr(scene, '_take_snapshot')
+                and hasattr(scene, 'undo_stack')
+                and scene.undo_stack is not None  # type: ignore[union-attr]
+            ):
+                self._undo_before_snap: Any = scene._take_snapshot()  # type: ignore[union-attr]
+            else:
+                self._undo_before_snap = None
             event.accept()
         # Allow the default handler to manage selection
         super().mousePressEvent(event)
@@ -310,14 +326,24 @@ class ComponentItem(QGraphicsItem):
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         was_dragging = self._dragging
+        undo_before = getattr(self, '_undo_before_snap', None)
         self._drag_start = None
         self._drag_orig_pos = None
         self._dragging = False
+        self._undo_before_snap = None
         super().mouseReleaseEvent(event)
         if was_dragging:
             scene = self.scene()
             if hasattr(scene, "_rebuild_auto_wires"):
                 scene._rebuild_auto_wires()  # type: ignore[union-attr]
+            # Push undo for the drag move
+            if (
+                undo_before is not None
+                and hasattr(scene, '_take_snapshot')
+                and hasattr(scene, '_push_undo')
+            ):
+                after = scene._take_snapshot()  # type: ignore[union-attr]
+                scene._push_undo("Move Component", undo_before, after)  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
     # itemChange – snap externally-set positions (e.g. rebuild_from_circuit)
@@ -337,15 +363,35 @@ class ComponentItem(QGraphicsItem):
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         menu = QMenu()
-        menu.addAction("Rotate CW  (R)").triggered.connect(self._rotate_cw)
-        menu.addAction("Rotate CCW").triggered.connect(self._rotate_ccw)
-        menu.addAction("Flip Horizontal  (F)").triggered.connect(self._flip_h)
-        menu.addAction("Flip Vertical  (V)").triggered.connect(self._flip_v)
+        menu.addAction("Rotate CW  (R)").triggered.connect(
+            lambda: self._context_action(self._rotate_cw, "Rotate"))
+        menu.addAction("Rotate CCW").triggered.connect(
+            lambda: self._context_action(self._rotate_ccw, "Rotate CCW"))
+        menu.addAction("Flip Horizontal  (F)").triggered.connect(
+            lambda: self._context_action(self._flip_h, "Flip Horizontal"))
+        menu.addAction("Flip Vertical  (V)").triggered.connect(
+            lambda: self._context_action(self._flip_v, "Flip Vertical"))
         menu.addSeparator()
         menu.addAction("Properties…").triggered.connect(self._open_props)
         menu.addSeparator()
         menu.addAction("Delete").triggered.connect(self._delete_self)
         menu.exec(event.screenPos())
+
+    def _context_action(self, fn: Any, text: str) -> None:
+        """Wrap a context-menu action with undo capture."""
+        scene = self.scene()
+        before = None
+        if (
+            scene is not None
+            and hasattr(scene, '_take_snapshot')
+            and hasattr(scene, 'undo_stack')
+            and scene.undo_stack is not None  # type: ignore[union-attr]
+        ):
+            before = scene._take_snapshot()  # type: ignore[union-attr]
+        fn()
+        if before is not None and hasattr(scene, '_push_undo') and hasattr(scene, '_take_snapshot'):
+            after = scene._take_snapshot()  # type: ignore[union-attr]
+            scene._push_undo(text, before, after)  # type: ignore[union-attr]
 
     def _rotate_cw(self) -> None:
         self.setRotation(self.rotation() + 90)
@@ -378,12 +424,22 @@ class ComponentItem(QGraphicsItem):
     def _delete_self(self) -> None:
         scene = self.scene()
         if scene:
+            before = None
+            if (
+                hasattr(scene, '_take_snapshot')
+                and hasattr(scene, 'undo_stack')
+                and scene.undo_stack is not None  # type: ignore[union-attr]
+            ):
+                before = scene._take_snapshot()  # type: ignore[union-attr]
             if hasattr(scene, "circuit") and hasattr(scene.circuit, "remove_component"):
                 scene.circuit.remove_component(  # type: ignore[union-attr]
                     self.component_id)
             scene.removeItem(self)
             if hasattr(scene, "_rebuild_auto_wires"):
                 scene._rebuild_auto_wires()  # type: ignore[union-attr]
+            if before is not None and hasattr(scene, '_push_undo') and hasattr(scene, '_take_snapshot'):
+                after = scene._take_snapshot()  # type: ignore[union-attr]
+                scene._push_undo("Delete Component", before, after)  # type: ignore[union-attr]
 
     def _open_props(self) -> None:
         _open_properties(self)
