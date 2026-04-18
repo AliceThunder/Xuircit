@@ -71,6 +71,18 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._connect_signals()
 
+        # Feature #2: apply saved font settings to labels
+        self._apply_font_settings()
+
+    def _apply_font_settings(self) -> None:
+        """Feature #2: apply saved font/size settings to LabelItem."""
+        from ..app.settings import AppSettings
+        from ..components.base import LabelItem
+        from PyQt6.QtGui import QFont
+        settings = AppSettings()
+        font = QFont(settings.label_font_family(), settings.label_font_size())
+        LabelItem.set_label_font(font)
+
     # ------------------------------------------------------------------
     # Menu bar
     # ------------------------------------------------------------------
@@ -162,6 +174,13 @@ class MainWindow(QMainWindow):
         lib_menu.addAction(self._action(
             "Manage User Components…",
             callback=self._manage_user_library,
+        ))
+
+        # Settings
+        settings_menu = mb.addMenu("&Settings")
+        settings_menu.addAction(self._action(
+            "Preferences…",
+            callback=self._open_settings,
         ))
 
         # Help
@@ -441,6 +460,15 @@ class MainWindow(QMainWindow):
         # Reset singleton and refresh palette after any changes
         LibraryManager.reset_instance()
         self._palette._populate(self._palette._search.text())
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    def _open_settings(self) -> None:
+        from ..dialogs.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # About

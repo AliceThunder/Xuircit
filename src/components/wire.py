@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (
 class WireItem(QGraphicsPathItem):
     """A wire between two points, auto-routed at 90° angles."""
 
+    _DEFAULT_COLOR = "#1a1a8c"
+
     def __init__(self, start: QPointF, end: QPointF,
                  wire_id: str | None = None,
                  is_auto: bool = False) -> None:
@@ -30,8 +32,10 @@ class WireItem(QGraphicsPathItem):
         self.net_name: str = ""
         # Bug 1 fix: auto-generated wires are non-interactive
         self.is_auto: bool = is_auto
+        # Feature #8: per-wire color
+        self._color: str = self._DEFAULT_COLOR
 
-        pen = QPen(QColor("#1a1a8c"), 2.0)
+        pen = QPen(QColor(self._color), 2.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self.setPen(pen)
@@ -54,6 +58,15 @@ class WireItem(QGraphicsPathItem):
         path.lineTo(e)
         self.setPath(path)
 
+    def set_color(self, color: str) -> None:
+        """Feature #8: change the wire's display color."""
+        self._color = color
+        pen = QPen(QColor(color), 2.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        self.setPen(pen)
+        self.update()
+
     def update_endpoints(self, start: QPointF, end: QPointF) -> None:
         self.start_pos = start
         self.end_pos = end
@@ -61,8 +74,19 @@ class WireItem(QGraphicsPathItem):
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         menu = QMenu()
+        menu.addAction("Set Wire Color…").triggered.connect(self._set_color)
+        menu.addSeparator()
         menu.addAction("Delete Wire").triggered.connect(self._delete_self)
         menu.exec(event.screenPos())
+
+    def _set_color(self) -> None:
+        """Feature #8: open color dialog for wire color."""
+        from PyQt6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(
+            QColor(self._color), None, "Set Wire Color"
+        )
+        if color.isValid():
+            self.set_color(color.name())
 
     def _delete_self(self) -> None:
         scene = self.scene()
@@ -77,6 +101,7 @@ class WireItem(QGraphicsPathItem):
             "start_pin": list(self.start_pin) if self.start_pin else None,
             "end_pin": list(self.end_pin) if self.end_pin else None,
             "net_name": self.net_name,
+            "color": self._color,
         }
 
     @classmethod
@@ -90,6 +115,9 @@ class WireItem(QGraphicsPathItem):
         item.start_pin = tuple(sp) if sp else None  # type: ignore[assignment]
         item.end_pin = tuple(ep) if ep else None  # type: ignore[assignment]
         item.net_name = data.get("net_name", "")
+        # Feature #8: restore wire color
+        if "color" in data:
+            item.set_color(data["color"])
         return item
 
 

@@ -757,6 +757,8 @@ class CircuitScene(QGraphicsScene):
             # Issue 14: persist per-label visibility flags
             comp["ref_visible"] = item._ref_visible
             comp["val_visible"] = item._val_visible
+            # Feature #7: persist component color
+            comp["color"] = item._color
             from ..components.user_component import UserComponentItem
             if isinstance(item, UserComponentItem):
                 comp["extra_visible"] = list(item._extra_visible)
@@ -815,6 +817,9 @@ class CircuitScene(QGraphicsScene):
                 item._ref_visible = comp.get("ref_visible", True)
                 item._val_visible = comp.get("val_visible", True)
                 item._refresh_labels()
+                # Feature #7: restore component color
+                if "color" in comp:
+                    item._color = comp["color"]
                 # Issue 14: restore extra-property visibility for UserComponentItem
                 from ..components.user_component import UserComponentItem
                 if isinstance(item, UserComponentItem):
