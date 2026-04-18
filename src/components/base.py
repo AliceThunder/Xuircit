@@ -54,12 +54,17 @@ class PinItem(QGraphicsEllipseItem):
 
 
 class LabelItem(QGraphicsSimpleTextItem):
-    """A draggable, always-upright text label attached to a component.
+    """A draggable text label attached to a component.
 
-    Uses ItemIgnoresTransformations so the text is never rotated/flipped
-    regardless of the parent component's transform.  The position (pos())
-    is in parent-local coordinates and acts as a direct screen-space offset
-    from the parent's scene position.
+    Without ``ItemIgnoresTransformations`` the label scales with the canvas
+    zoom just like the component body (Issue 7).  The label's ``pos()`` is in
+    the parent component's *local* coordinate space, so it naturally moves to
+    the correct side when the parent is rotated or flipped (Issue 6).
+
+    The ``paint()`` override counter-rotates and counter-flips the text so it
+    always appears upright regardless of the parent's orientation.  Text
+    alignment (left / right / centre) is inferred automatically from the
+    label's scene position relative to the parent component.
     """
 
     def __init__(self, text: str, parent: "ComponentItem") -> None:
@@ -69,15 +74,20 @@ class LabelItem(QGraphicsSimpleTextItem):
         self.setBrush(QBrush(QColor("#333333")))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setFlag(
-            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        # NOTE: ItemIgnoresTransformations is intentionally NOT set so the
+        # label scales with the view zoom like the component body.
         self.setZValue(5)
 
     def boundingRect(self) -> QRectF:
-        """Return a bounding rect centred on the item's origin."""
+        """Return a conservative bounding rect centred on the item's origin.
+
+        The rect is made generous enough to cover the text in all alignment
+        modes (left / right / centre) without the need to know the current
+        rotation.
+        """
         br = super().boundingRect()
-        return QRectF(-br.width() / 2, -br.height() / 2,
-                      br.width(), br.height())
+        w, h = br.width(), br.height()
+        return QRectF(-w, -h, 2 * w, 2 * h)
 
     def paint(
         self,
@@ -85,10 +95,45 @@ class LabelItem(QGraphicsSimpleTextItem):
         option: QStyleOptionGraphicsItem,
         widget: QWidget | None = None,
     ) -> None:
-        # Shift painter so that the text is drawn centred around the origin.
-        br = QGraphicsSimpleTextItem.boundingRect(self)
-        painter.translate(-br.width() / 2, -br.height() / 2)
-        super().paint(painter, option, widget)
+        import math
+
+        wt = painter.worldTransform()
+        # Rotation angle of the item in device space (degrees, CW positive).
+        angle_deg = math.degrees(math.atan2(wt.m12(), wt.m11()))
+        # Determinant < 0 means an odd number of reflections are applied.
+        det = wt.m11() * wt.m22() - wt.m12() * wt.m21()
+        has_reflection = det < 0
+
+        br_text = QGraphicsSimpleTextItem.boundingRect(self)
+        w, h = br_text.width(), br_text.height()
+
+        # ── Determine text alignment from scene position ──────────────
+        # Left side  → right-align (text ends at anchor)  ax = -w
+        # Right side → left-align  (text starts at anchor) ax = 0
+        # Top/Bottom → left-align per spec                  ax = 0
+        ax: float = 0.0  # default: left-align
+        parent = self.parentItem()
+        if parent is not None:
+            lsp = self.mapToScene(QPointF(0.0, 0.0))
+            psp = parent.scenePos()
+            dx = lsp.x() - psp.x()
+            dy = lsp.y() - psp.y()
+            if abs(dx) >= abs(dy):
+                ax = -w if dx < 0 else 0.0
+            # else: top/bottom → ax stays 0 (left-align)
+
+        painter.save()
+        # Counter-rotate so the text is always upright.
+        painter.rotate(-angle_deg)
+        if has_reflection:
+            # Counter the reflection; also swap the horizontal alignment
+            # because the x-axis direction is now reversed.
+            painter.scale(-1.0, 1.0)
+            ax = -ax - w
+        # Vertically centre the text around the item's origin.
+        painter.translate(ax, -h / 2)
+        QGraphicsSimpleTextItem.paint(self, painter, option, widget)
+        painter.restore()
 
 
 class ComponentItem(QGraphicsItem):
@@ -191,28 +236,6 @@ class ComponentItem(QGraphicsItem):
         self._ref_label.setVisible(self._show_ref_label)
         self._val_label.setText(self.value)
         self._val_label.setVisible(bool(self.value) and self._show_val_label)
-
-    def _rotate_label_offset(self, label: LabelItem) -> None:
-        """Rotate the label offset 90° CW in screen-space (y-down)."""
-        p = label.pos()
-        # CW 90° in screen (y-down): (x, y) → (-y, x)
-        label.setPos(QPointF(-p.y(), p.x()))
-
-    def _rotate_label_offset_ccw(self, label: LabelItem) -> None:
-        """Rotate the label offset 90° CCW in screen-space (y-down)."""
-        p = label.pos()
-        # CCW 90° in screen (y-down): (x, y) → (y, -x)
-        label.setPos(QPointF(p.y(), -p.x()))
-
-    def _flip_label_h(self, label: LabelItem) -> None:
-        """Mirror label offset about the vertical axis: (x, y) → (-x, y)."""
-        p = label.pos()
-        label.setPos(QPointF(-p.x(), p.y()))
-
-    def _flip_label_v(self, label: LabelItem) -> None:
-        """Mirror label offset about the horizontal axis: (x, y) → (x, -y)."""
-        p = label.pos()
-        label.setPos(QPointF(p.x(), -p.y()))
 
     # ------------------------------------------------------------------
     # QGraphicsItem interface
@@ -326,14 +349,10 @@ class ComponentItem(QGraphicsItem):
 
     def _rotate_cw(self) -> None:
         self.setRotation(self.rotation() + 90)
-        self._rotate_label_offset(self._ref_label)
-        self._rotate_label_offset(self._val_label)
         self._notify_scene_changed()
 
     def _rotate_ccw(self) -> None:
         self.setRotation(self.rotation() - 90)
-        self._rotate_label_offset_ccw(self._ref_label)
-        self._rotate_label_offset_ccw(self._val_label)
         self._notify_scene_changed()
 
     def _flip_h(self) -> None:
@@ -341,8 +360,6 @@ class ComponentItem(QGraphicsItem):
         self._flip_h_active = not self._flip_h_active
         t = QTransform(-1, 0, 0, 0, 1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
-        self._flip_label_h(self._ref_label)
-        self._flip_label_h(self._val_label)
         self._notify_scene_changed()
 
     def _flip_v(self) -> None:
@@ -350,8 +367,6 @@ class ComponentItem(QGraphicsItem):
         self._flip_v_active = not self._flip_v_active
         t = QTransform(1, 0, 0, 0, -1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
-        self._flip_label_v(self._ref_label)
-        self._flip_label_v(self._val_label)
         self._notify_scene_changed()
 
     def _notify_scene_changed(self) -> None:

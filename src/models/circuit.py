@@ -13,6 +13,9 @@ class Circuit:
         self.wires: list[dict[str, Any]] = []
         self._comp_index: dict[str, dict[str, Any]] = {}
         self._wire_index: dict[str, dict[str, Any]] = {}
+        # Label-position format version (2 = parent-local coordinates; 1 = old
+        # manually-rotated screen-space coordinates from pre-v2.0 project files).
+        self.label_format: int = 2
 
     # ------------------------------------------------------------------
     # Component management

@@ -35,6 +35,25 @@ class SymbolCmd:
 
 
 @dataclass
+class LabelDef:
+    """Definition of a label attached to a user-defined component.
+
+    Attributes
+    ----------
+    text    : Label text (may reference tokens like "$ref" or "$value" in
+              future; currently treated as a literal string).
+    side    : Which side of the component body the label sits on.
+              One of ``"left"``, ``"right"``, ``"top"``, ``"bottom"``.
+    order   : Integer used to sequence multiple labels on the same side
+              (smaller = closer to the component body edge, top-to-bottom
+              or left-to-right).
+    """
+    text: str
+    side: str = "top"   # "left" | "right" | "top" | "bottom"
+    order: int = 0
+
+
+@dataclass
 class UserCompDef:
     type_name: str
     display_name: str
@@ -48,6 +67,8 @@ class UserCompDef:
     # None means use the built-in default.
     ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
     val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
+    # Extra named labels beyond ref/value (order within a side is preserved).
+    labels: list[LabelDef] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -57,6 +78,8 @@ class UserCompDef:
     def from_dict(cls, d: dict[str, Any]) -> "UserCompDef":
         pins = [PinDef(**p) for p in d.get("pins", [])]
         symbol = [SymbolCmd(**s) for s in d.get("symbol", [])]
+        raw_labels = d.get("labels", [])
+        labels = [LabelDef(**lb) for lb in raw_labels]
         return cls(
             type_name=d["type_name"],
             display_name=d.get("display_name", d["type_name"]),
@@ -68,6 +91,7 @@ class UserCompDef:
             symbol=symbol,
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
+            labels=labels,
         )
 
 
