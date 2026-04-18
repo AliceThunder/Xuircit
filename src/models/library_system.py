@@ -60,8 +60,13 @@ class LibEntry:
     is_builtin: bool = True
     ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
     val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
+    # Feature 8: vertical (rotated) perspective offsets
+    ref_label_offset_v: list[float] = field(default_factory=list)
+    val_label_offset_v: list[float] = field(default_factory=list)
+    # Feature 7: per-label style dicts for ref and val
+    ref_label_style: dict = field(default_factory=dict)
+    val_label_style: dict = field(default_factory=dict)
     # Extra named labels (for user-defined components).
-    # Each item: {"text": str, "side": str, "order": int, "default_value": str}
     labels: list[dict] = field(default_factory=list)
     # Fix 3: True ⟹ component is a virtual (non-SPICE) wiring helper.
     # Virtual components are saved in .xcit_virtual rather than as SPICE elements.
@@ -86,6 +91,10 @@ class LibEntry:
             is_builtin=d.get("is_builtin", True),
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
+            ref_label_offset_v=d.get("ref_label_offset_v", []),
+            val_label_offset_v=d.get("val_label_offset_v", []),
+            ref_label_style=d.get("ref_label_style", {}),
+            val_label_style=d.get("val_label_style", {}),
             labels=d.get("labels", []),
             is_virtual=d.get("is_virtual", False),
         )
