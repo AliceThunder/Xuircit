@@ -84,6 +84,10 @@ class ComponentItem(QGraphicsItem):
         self._drag_orig_pos: QPointF | None = None
         self._dragging: bool = False
 
+        # Flip state tracked explicitly so serialisation is unambiguous
+        self._flip_h_active: bool = False
+        self._flip_v_active: bool = False
+
         self._pins: dict[str, PinItem] = {}
         self._build_pins()
 
@@ -248,15 +252,14 @@ class ComponentItem(QGraphicsItem):
 
     def _flip_h(self) -> None:
         """Flip horizontally (mirror about vertical axis)."""
-        t = self.transform()
-        # Apply scale(-1, 1) centred at item origin
-        t = QTransform(-1, 0, 0, 0, 1, 0, 0, 0, 1) * t
+        self._flip_h_active = not self._flip_h_active
+        t = QTransform(-1, 0, 0, 0, 1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
 
     def _flip_v(self) -> None:
         """Flip vertically (mirror about horizontal axis)."""
-        t = self.transform()
-        t = QTransform(1, 0, 0, 0, -1, 0, 0, 0, 1) * t
+        self._flip_v_active = not self._flip_v_active
+        t = QTransform(1, 0, 0, 0, -1, 0, 0, 0, 1) * self.transform()
         self.setTransform(t)
 
     def _delete_self(self) -> None:
@@ -280,7 +283,6 @@ class ComponentItem(QGraphicsItem):
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        t = self.transform()
         return {
             "id": self.component_id,
             "type": self.comp_type,
@@ -290,8 +292,8 @@ class ComponentItem(QGraphicsItem):
             "x": self.pos().x(),
             "y": self.pos().y(),
             "rotation": self.rotation(),
-            "flip_h": t.m11() < 0,  # True if horizontal flip applied
-            "flip_v": t.m22() < 0,  # True if vertical flip applied
+            "flip_h": self._flip_h_active,
+            "flip_v": self._flip_v_active,
         }
 
 

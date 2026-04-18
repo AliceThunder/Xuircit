@@ -17,6 +17,8 @@ from ..models.circuit import Circuit
 
 # Snap radius: within this many pixels of a pin the wire snaps to it.
 _PIN_SNAP_RADIUS = GRID_SIZE * 0.8
+# Tolerance for treating two coordinates as equal (used for aligned-pin detection).
+_COORD_EPSILON = 1.0
 
 
 class SceneMode(Enum):
@@ -44,6 +46,7 @@ def _registry() -> dict[str, type[ComponentItem]]:
             NMOSItem, PMOSItem, IGBTItem,
         )
         from ..components.power import IdealSwitchItem, SCRItem, TRIACItem
+        from ..components.wire import WireElbowItem, WireTeeItem
 
         _COMP_REGISTRY = {
             "R": ResistorItem,
@@ -67,6 +70,8 @@ def _registry() -> dict[str, type[ComponentItem]]:
             "SCR": SCRItem,
             "TRIAC": TRIACItem,
             "GND": GroundItem,
+            "ELBOW": WireElbowItem,
+            "TEE": WireTeeItem,
         }
     return _COMP_REGISTRY
 
@@ -115,6 +120,8 @@ class CircuitScene(QGraphicsScene):
         self._wire_start: QPointF | None = None
         self._wire_start_pin: tuple[str, str] | None = None
         self._temp_wire: WireItem | None = None
+        # Visual alignment indicator (dashed line shown in auto-connect mode)
+        self._align_indicator: Any = None
 
         # Grid visibility flag (False during export)
         self._show_grid: bool = True
@@ -181,8 +188,22 @@ class CircuitScene(QGraphicsScene):
         if self._mode == SceneMode.PLACE_COMPONENT and self._ghost:
             self._ghost.setPos(snapped)
         elif self._mode == SceneMode.DRAW_WIRE and self._wire_start:
-            # Snap endpoint to nearby pin if available
-            effective_end, _ = self._nearest_pin(snapped)
+            # 1. Direct pin snap (nearest pin within snap radius)
+            pin_pos, _ = self._nearest_pin(snapped)
+            # 2. H/V alignment snap: look for an aligned pin further away
+            aligned_pos, aligned_info = self._aligned_pin(snapped)
+
+            # Prefer the direct snap if available, else aligned, else raw grid
+            if pin_pos is not None:
+                effective_end = pin_pos
+                self._remove_align_indicator()
+            elif aligned_pos is not None:
+                effective_end = aligned_pos
+                self._show_align_indicator(snapped, aligned_pos)
+            else:
+                effective_end = snapped
+                self._remove_align_indicator()
+
             if self._temp_wire is None:
                 wire = WireItem(self._wire_start, effective_end)
                 self.addItem(wire)
@@ -254,8 +275,11 @@ class CircuitScene(QGraphicsScene):
     # ------------------------------------------------------------------
 
     def _wire_click(self, pos: QPointF) -> None:
-        # Prefer snapping to a nearby pin over raw grid position
+        # 1. Direct pin snap
         pin_pos, pin_info = self._nearest_pin(pos)
+        # 2. H/V alignment snap as fallback
+        if pin_pos is None:
+            pin_pos, pin_info = self._aligned_pin(pos)
         actual = pin_pos if pin_pos is not None else pos
 
         if self._wire_start is None:
@@ -287,6 +311,7 @@ class CircuitScene(QGraphicsScene):
         if self._temp_wire:
             self.removeItem(self._temp_wire)
             self._temp_wire = None
+        self._remove_align_indicator()
         self._wire_start = None
         self._wire_start_pin = None
 
@@ -298,6 +323,72 @@ class CircuitScene(QGraphicsScene):
                 if isinstance(parent, ComponentItem):
                     return (parent.component_id, item.pin_name)
         return None
+
+    def _aligned_pin(
+        self, pos: QPointF, max_dist: float = 400.0, tol: float = 4.0
+    ) -> tuple[QPointF | None, tuple[str, str] | None]:
+        """Find the nearest pin that is horizontally OR vertically aligned
+        with *pos* within *tol* pixels of the axis.
+
+        Returns the closest such pin (scene pos, info) within *max_dist*.
+        Excludes pins already at the wire start (to avoid zero-length wires).
+        """
+        best_d = max_dist
+        best_pos: QPointF | None = None
+        best_info: tuple[str, str] | None = None
+
+        search = QRectF(
+            pos.x() - max_dist, pos.y() - max_dist,
+            2 * max_dist, 2 * max_dist,
+        )
+        for item in self.items(search):
+            if not isinstance(item, ComponentItem):
+                continue
+            for pin_name, pin in item._pins.items():
+                sp = item.mapToScene(pin.pos())
+                # Skip if same point as wire start (no zero-length wire)
+                if self._wire_start is not None:
+                    if abs(sp.x() - self._wire_start.x()) < _COORD_EPSILON and \
+                       abs(sp.y() - self._wire_start.y()) < _COORD_EPSILON:
+                        continue
+                dx = abs(sp.x() - pos.x())
+                dy = abs(sp.y() - pos.y())
+                # Horizontally aligned: same Y within tolerance
+                if dy < tol:
+                    d = dx
+                    if d < best_d:
+                        best_d = d
+                        best_pos = sp
+                        best_info = (item.component_id, pin_name)
+                # Vertically aligned: same X within tolerance
+                elif dx < tol:
+                    d = dy
+                    if d < best_d:
+                        best_d = d
+                        best_pos = sp
+                        best_info = (item.component_id, pin_name)
+
+        return best_pos, best_info
+
+    def _show_align_indicator(self, from_pos: QPointF,
+                              to_pos: QPointF) -> None:
+        """Draw a dashed guide line to the aligned pin."""
+        from PyQt6.QtGui import QPen, QColor
+        self._remove_align_indicator()
+        pen = QPen(QColor("#22cc44"), 1, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        self._align_indicator = self.addLine(
+            from_pos.x(), from_pos.y(),
+            to_pos.x(), to_pos.y(),
+            pen,
+        )
+        if self._align_indicator:
+            self._align_indicator.setZValue(10)
+
+    def _remove_align_indicator(self) -> None:
+        if self._align_indicator is not None:
+            self.removeItem(self._align_indicator)
+            self._align_indicator = None
 
     def _nearest_pin(
         self, pos: QPointF, radius: float = _PIN_SNAP_RADIUS
@@ -442,6 +533,7 @@ class CircuitScene(QGraphicsScene):
                 if isinstance(item, ComponentItem):
                     item._flip_v()
         elif key == Qt.Key.Key_Escape:
+            self._cancel_wire()
             self.set_mode(SceneMode.SELECT)
         else:
             super().keyPressEvent(event)

@@ -37,9 +37,9 @@ class WireItem(QGraphicsPathItem):
         self._rebuild_path()
 
     def _rebuild_path(self) -> None:
+        """L-shaped 90° routing: go horizontal first, then vertical."""
         s, e = self.start_pos, self.end_pos
         path = QPainterPath(s)
-        # L-shaped 90° routing: go horizontal first, then vertical
         mid = QPointF(e.x(), s.y())
         path.lineTo(mid)
         path.lineTo(e)
@@ -82,3 +82,69 @@ class WireItem(QGraphicsPathItem):
         item.end_pin = tuple(ep) if ep else None  # type: ignore[assignment]
         item.net_name = data.get("net_name", "")
         return item
+
+
+# ---------------------------------------------------------------------------
+# Wiring connector components (Elbow and Tee)
+# ---------------------------------------------------------------------------
+
+from .base import ComponentItem, _std_pen
+
+
+class WireElbowItem(ComponentItem):
+    """90° elbow wire connector.
+
+    Pins: 'a' at (0, -20) and 'b' at (20, 0) — an L-shaped corner.
+    """
+
+    _WIDTH = 40.0
+    _HEIGHT = 40.0
+
+    def __init__(self, ref: str = "J1", value: str = "",
+                 params: dict[str, Any] | None = None,
+                 comp_id: str | None = None) -> None:
+        super().__init__("ELBOW", ref, value, params, comp_id)
+
+    def _pin_definitions(self) -> dict[str, QPointF]:
+        return {"a": QPointF(0, -20), "b": QPointF(20, 0)}
+
+    def _draw_symbol(self, painter: QPainter) -> None:
+        painter.setPen(_std_pen())
+        painter.setBrush(QBrush(QColor("#e0f0ff")))
+        # L-shaped corner mark
+        painter.drawLine(QPointF(0, -20), QPointF(0, 0))
+        painter.drawLine(QPointF(0, 0), QPointF(20, 0))
+        # Corner dot
+        painter.setBrush(QBrush(QColor("#1a1a8c")))
+        painter.drawEllipse(QPointF(0, 0), 4, 4)
+
+
+class WireTeeItem(ComponentItem):
+    """T-junction wire connector.
+
+    Pins: 'left' at (-20, 0), 'right' at (20, 0), 'down' at (0, 20).
+    """
+
+    _WIDTH = 40.0
+    _HEIGHT = 40.0
+
+    def __init__(self, ref: str = "J1", value: str = "",
+                 params: dict[str, Any] | None = None,
+                 comp_id: str | None = None) -> None:
+        super().__init__("TEE", ref, value, params, comp_id)
+
+    def _pin_definitions(self) -> dict[str, QPointF]:
+        return {
+            "left": QPointF(-20, 0),
+            "right": QPointF(20, 0),
+            "down": QPointF(0, 20),
+        }
+
+    def _draw_symbol(self, painter: QPainter) -> None:
+        painter.setPen(_std_pen())
+        # T-shaped lines
+        painter.drawLine(QPointF(-20, 0), QPointF(20, 0))
+        painter.drawLine(QPointF(0, 0), QPointF(0, 20))
+        # Junction dot
+        painter.setBrush(QBrush(QColor("#1a1a8c")))
+        painter.drawEllipse(QPointF(0, 0), 4, 4)

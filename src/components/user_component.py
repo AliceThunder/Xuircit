@@ -29,8 +29,8 @@ class UserComponentItem(ComponentItem):
             all_x.append(p.x)
             all_y.append(p.y)
         for s in udef.symbol:
-            all_x += [s.x1, s.x2, s.x + s.w]
-            all_y += [s.y1, s.y2, s.y + s.h]
+            all_x += [s.x1, s.x2, s.x1 + s.w]
+            all_y += [s.y1, s.y2, s.y1 + s.h]
         if all_x and all_y:
             w = max(60.0, abs(max(all_x)) * 2, abs(min(all_x)) * 2)
             h = max(40.0, abs(max(all_y)) * 2, abs(min(all_y)) * 2)
