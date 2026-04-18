@@ -171,14 +171,11 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self._act_select_mode)
         tools_menu.addSeparator()
         tools_menu.addAction(self._action(
-            "Rotate Selected CW  (R)", _sc("tools.rotate_cw"),
-            callback=self._rotate_selected_cw))
+            "Rotate Selected CW  (R)", callback=self._rotate_selected_cw))
         tools_menu.addAction(self._action(
-            "Flip Selected Horizontal  (F)", _sc("tools.flip_h"),
-            callback=self._flip_selected_h))
+            "Flip Selected Horizontal  (F)", callback=self._flip_selected_h))
         tools_menu.addAction(self._action(
-            "Flip Selected Vertical  (V)", _sc("tools.flip_v"),
-            callback=self._flip_selected_v))
+            "Flip Selected Vertical  (V)", callback=self._flip_selected_v))
 
         # Library
         lib_menu = mb.addMenu("&Library")
