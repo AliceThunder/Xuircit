@@ -1,10 +1,14 @@
 """User Component Editor — create and edit schematic components across libraries."""
 from __future__ import annotations
 
+import copy
 from typing import Any
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PyQt6.QtCore import QPointF, QRectF, Qt, QObject, QEvent
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QPainter, QPen, QKeySequence, QUndoCommand,
+    QUndoStack,
+)
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -35,6 +39,40 @@ from ..models.user_library import LabelDef, PinDef, SymbolCmd, UserCompDef
 from ..models.library_system import LibEntry, LibraryManager, PRESET_LIBRARY_ID
 from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
 
+# Issue 7: sub-grid (denser than existing GRID_SIZE=20).
+# Pins still snap to GRID_SIZE; drawing-tool endpoints snap to SUB_GRID.
+SUB_GRID = GRID_SIZE // 2  # 10 px
+
+
+def _snap_sub(x: float, y: float) -> tuple[float, float]:
+    """Snap to the denser sub-grid."""
+    return round(x / SUB_GRID) * SUB_GRID, round(y / SUB_GRID) * SUB_GRID
+
+
+# ---------------------------------------------------------------------------
+# Undo command for symbol scene (Issue 6)
+# ---------------------------------------------------------------------------
+
+class _SymSceneSnapshot(QUndoCommand):
+    """Undo/redo a complete symbol-state change."""
+
+    def __init__(self, scene: "_SymbolScene", before: dict, after: dict,
+                 text: str) -> None:
+        super().__init__(text)
+        self._scene = scene
+        self._before = before
+        self._after = after
+        self._first_redo = True
+
+    def undo(self) -> None:
+        self._scene._restore_snapshot(self._before)
+
+    def redo(self) -> None:
+        if self._first_redo:
+            self._first_redo = False
+            return
+        self._scene._restore_snapshot(self._after)
+
 
 # ---------------------------------------------------------------------------
 # Mini scene / view for drawing the symbol
@@ -53,6 +91,12 @@ class _SymbolScene(QGraphicsScene):
         self._temp_item: QGraphicsItem | None = None
         self.pins: list["_PinMarker"] = []
         self.sym_cmds: list[SymbolCmd] = []
+        # Issue 5/6: parallel list of QGraphicsItems for sym_cmds (1-to-1 mapping)
+        self._sym_items: list[QGraphicsItem] = []
+        # Issue 5: clipboard for copy/paste within the editor
+        self._sym_clipboard: list[SymbolCmd] = []
+        # Issue 6: undo stack
+        self._undo_stack = QUndoStack(self)
         self._draw_origin()
 
     def _draw_origin(self) -> None:
@@ -64,45 +108,143 @@ class _SymbolScene(QGraphicsScene):
 
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawBackground(painter, rect)
+        # Issue 7: draw the denser sub-grid first (lighter), then the normal grid on top
+        self._draw_sub_grid(painter, rect)
         draw_grid(painter, rect)
+
+    def _draw_sub_grid(self, painter: QPainter, rect: QRectF) -> None:
+        """Draw the additional denser sub-grid (SUB_GRID spacing)."""
+        import math
+        left = math.floor(rect.left() / SUB_GRID) * SUB_GRID - SUB_GRID
+        top = math.floor(rect.top() / SUB_GRID) * SUB_GRID - SUB_GRID
+        right = math.ceil(rect.right() / SUB_GRID) * SUB_GRID + SUB_GRID
+        bottom = math.ceil(rect.bottom() / SUB_GRID) * SUB_GRID + SUB_GRID
+
+        pen = QPen(QColor("#efefef"), 0)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        x = left
+        while x <= right:
+            if x % GRID_SIZE != 0:  # skip lines that belong to the major grid
+                painter.drawLine(QPointF(x, top), QPointF(x, bottom))
+            x += SUB_GRID
+        y = top
+        while y <= bottom:
+            if y % GRID_SIZE != 0:
+                painter.drawLine(QPointF(left, y), QPointF(right, y))
+            y += SUB_GRID
 
     def set_tool(self, tool: str) -> None:
         self._tool = tool
         if tool == "select":
-            self._line_start = None
-            if self._temp_item:
-                self.removeItem(self._temp_item)
-                self._temp_item = None
+            self._cancel_draw()
+
+    def _cancel_draw(self) -> None:
+        """Cancel any in-progress drawing operation."""
+        self._line_start = None
+        if self._temp_item:
+            self.removeItem(self._temp_item)
+            self._temp_item = None
+
+    # ------------------------------------------------------------------
+    # Undo/redo helpers (Issue 6)
+    # ------------------------------------------------------------------
+
+    def _snapshot(self) -> dict:
+        return {
+            "cmds": copy.deepcopy(self.sym_cmds),
+            "pins": [(p.pos().x(), p.pos().y(), p.pin_name) for p in self.pins],
+        }
+
+    def _restore_snapshot(self, snap: dict) -> None:
+        """Restore scene from a snapshot dict."""
+        # Rebuild sym items
+        for it in list(self._sym_items):
+            self.removeItem(it)
+        self._sym_items.clear()
+        self.sym_cmds.clear()
+        # Remove pins
+        for p in list(self.pins):
+            self.removeItem(p)
+        self.pins.clear()
+
+        pen = QPen(QColor("#111111"), 2)
+        for cmd in snap.get("cmds", []):
+            self.sym_cmds.append(cmd)
+            if cmd.kind == "line":
+                it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
+            elif cmd.kind == "rect":
+                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h), pen,
+                                  QBrush(Qt.BrushStyle.NoBrush))
+            elif cmd.kind == "ellipse":
+                rx, ry = cmd.w / 2, cmd.h / 2
+                it = self.addEllipse(
+                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h), pen,
+                    QBrush(Qt.BrushStyle.NoBrush))
+            else:
+                it = self.addLine(0, 0, 0, 0, pen)
+            it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+            self._sym_items.append(it)
+
+        for px, py, pname in snap.get("pins", []):
+            marker = _PinMarker(QPointF(px, py), pname)
+            self.addItem(marker)
+            self.pins.append(marker)
+
+    def _push_undo(self, text: str, before: dict, after: dict) -> None:
+        cmd = _SymSceneSnapshot(self, before, after, text)
+        self._undo_stack.push(cmd)
+
+    # ------------------------------------------------------------------
+    # Mouse events
+    # ------------------------------------------------------------------
 
     def mousePressEvent(self, event: Any) -> None:
         pos = event.scenePos()
+        # Issue 6: right-click cancels any ongoing drawing
+        if event.button() == Qt.MouseButton.RightButton:
+            self._cancel_draw()
+            return
+
         sx, sy = snap_to_grid(pos.x(), pos.y())
         snapped = QPointF(sx, sy)
-        # Pins must snap to grid; other drawing tools support arbitrary positions.
-        draw_pos = snapped if self._tool == "pin" else pos
+        # Issue 7: non-pin tools snap to sub-grid; pins snap to main grid
+        if self._tool == "pin":
+            draw_pos = snapped
+        else:
+            dsx, dsy = _snap_sub(pos.x(), pos.y())
+            draw_pos = QPointF(dsx, dsy)
 
         if self._tool == "pin":
+            before = self._snapshot()
             self._place_pin(snapped)
+            self._push_undo("Add Pin", before, self._snapshot())
         elif self._tool == "line":
             if self._line_start is None:
                 self._line_start = draw_pos
             else:
-                # Issue 3 fix: reset start to None (independent lines, not chains)
+                before = self._snapshot()
                 cmd = SymbolCmd("line",
                                 x1=self._line_start.x(), y1=self._line_start.y(),
                                 x2=draw_pos.x(), y2=draw_pos.y())
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
-                self.addLine(self._line_start.x(), self._line_start.y(),
-                             draw_pos.x(), draw_pos.y(), pen)
+                it = self.addLine(self._line_start.x(), self._line_start.y(),
+                                  draw_pos.x(), draw_pos.y(), pen)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
-                self._line_start = None  # end line; don't chain
+                self._line_start = None
+                self._push_undo("Draw Line", before, self._snapshot())
         elif self._tool == "rect":
             if self._line_start is None:
                 self._line_start = draw_pos
             else:
+                before = self._snapshot()
                 x1, y1 = self._line_start.x(), self._line_start.y()
                 x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
@@ -110,38 +252,47 @@ class _SymbolScene(QGraphicsScene):
                 cmd = SymbolCmd("rect", x1=rx, y1=ry, w=w, h=h)
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
-                self.addRect(QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addRect(QRectF(rx, ry, w, h), pen,
+                                  QBrush(Qt.BrushStyle.NoBrush))
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
                 self._line_start = None
+                self._push_undo("Draw Rect", before, self._snapshot())
         elif self._tool == "ellipse":
             if self._line_start is None:
                 self._line_start = draw_pos
             else:
+                before = self._snapshot()
                 x1, y1 = self._line_start.x(), self._line_start.y()
                 x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
-                # Store as ellipse cmd: x1/y1 = top-left, w/h = bounding rect dims
                 cmd = SymbolCmd("ellipse", x1=rx + w / 2, y1=ry + h / 2, w=w, h=h)
                 self.sym_cmds.append(cmd)
                 pen = QPen(QColor("#111111"), 2)
-                self.addEllipse(QRectF(rx, ry, w, h), pen,
-                                QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addEllipse(QRectF(rx, ry, w, h), pen,
+                                     QBrush(Qt.BrushStyle.NoBrush))
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
                 self._line_start = None
+                self._push_undo("Draw Ellipse", before, self._snapshot())
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: Any) -> None:
         pos = event.scenePos()
-        # Non-pin tools use raw position for free-form drawing (Issue 4).
-        draw_pos = pos if self._tool != "pin" else pos
-        if self._line_start is not None and self._tool in ("line", "rect",
-                                                            "ellipse"):
+        if self._line_start is not None and self._tool in ("line", "rect", "ellipse"):
+            # Issue 7: preview end-point also snaps to sub-grid
+            dsx, dsy = _snap_sub(pos.x(), pos.y())
+            draw_pos = QPointF(dsx, dsy)
             if self._temp_item:
                 self.removeItem(self._temp_item)
             pen = QPen(QColor("#2277ee"), 1, Qt.PenStyle.DashLine)
@@ -165,6 +316,137 @@ class _SymbolScene(QGraphicsScene):
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
         super().mouseMoveEvent(event)
 
+    # ------------------------------------------------------------------
+    # Keyboard handling (Issues 5 & 6)
+    # ------------------------------------------------------------------
+
+    def keyPressEvent(self, event: Any) -> None:
+        key = event.key()
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+        # Issue 6: undo (Ctrl+Z) / redo (Ctrl+Y or Ctrl+Shift+Z)
+        if ctrl and key == Qt.Key.Key_Z and not shift:
+            self._undo_stack.undo()
+            return
+        if ctrl and (key == Qt.Key.Key_Y or (key == Qt.Key.Key_Z and shift)):
+            self._undo_stack.redo()
+            return
+
+        # Issue 5: delete selected graphics
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            selected_items = [it for it in self.selectedItems()
+                              if it in self._sym_items]
+            selected_pins = [it for it in self.selectedItems()
+                             if isinstance(it, _PinMarker)]
+            if selected_items or selected_pins:
+                before = self._snapshot()
+                for it in selected_items:
+                    idx = self._sym_items.index(it)
+                    self._sym_items.pop(idx)
+                    self.sym_cmds.pop(idx)
+                    self.removeItem(it)
+                for p in selected_pins:
+                    self.pins.remove(p)
+                    self.removeItem(p)
+                self._push_undo("Delete", before, self._snapshot())
+            return
+
+        # Issue 5: copy selected graphics
+        if key == Qt.Key.Key_C and ctrl:
+            self._sym_clipboard = []
+            for it in self.selectedItems():
+                if it in self._sym_items:
+                    idx = self._sym_items.index(it)
+                    self._sym_clipboard.append(copy.deepcopy(self.sym_cmds[idx]))
+            return
+
+        # Issue 5: paste graphics
+        if key == Qt.Key.Key_V and ctrl:
+            if self._sym_clipboard:
+                before = self._snapshot()
+                pen = QPen(QColor("#111111"), 2)
+                for cmd in self._sym_clipboard:
+                    # Offset the pasted shape by sub-grid amount
+                    c = copy.deepcopy(cmd)
+                    c.x1 += SUB_GRID
+                    c.y1 += SUB_GRID
+                    if c.kind == "line":
+                        c.x2 += SUB_GRID
+                        c.y2 += SUB_GRID
+                    self.sym_cmds.append(c)
+                    if c.kind == "line":
+                        it = self.addLine(c.x1, c.y1, c.x2, c.y2, pen)
+                    elif c.kind == "rect":
+                        it = self.addRect(QRectF(c.x1, c.y1, c.w, c.h), pen,
+                                          QBrush(Qt.BrushStyle.NoBrush))
+                    elif c.kind == "ellipse":
+                        rx2, ry2 = c.w / 2, c.h / 2
+                        it = self.addEllipse(
+                            QRectF(c.x1 - rx2, c.y1 - ry2, c.w, c.h), pen,
+                            QBrush(Qt.BrushStyle.NoBrush))
+                    else:
+                        it = self.addLine(0, 0, 0, 0, pen)
+                    it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                    it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                    self._sym_items.append(it)
+                self._push_undo("Paste", before, self._snapshot())
+            return
+
+        # Issue 5: mirror (flip horizontally about y-axis) selected graphics
+        if key == Qt.Key.Key_M and not ctrl:
+            selected = [it for it in self.selectedItems() if it in self._sym_items]
+            if selected:
+                before = self._snapshot()
+                for it in selected:
+                    idx = self._sym_items.index(it)
+                    cmd = self.sym_cmds[idx]
+                    if cmd.kind == "line":
+                        cmd.x1, cmd.x2 = -cmd.x1, -cmd.x2
+                    elif cmd.kind == "rect":
+                        # rect stored as top-left (x1,y1) + size (w,h)
+                        cmd.x1 = -(cmd.x1 + cmd.w)
+                    elif cmd.kind == "ellipse":
+                        # ellipse stored as centre (x1,y1) + size (w,h)
+                        cmd.x1 = -cmd.x1
+                # Rebuild items from updated cmds
+                self._restore_snapshot(self._snapshot())
+                self._push_undo("Mirror", before, self._snapshot())
+            return
+
+        # Issue 5: arrow-key movement of selected items
+        arrow_keys = {
+            Qt.Key.Key_Left: (-SUB_GRID, 0),
+            Qt.Key.Key_Right: (SUB_GRID, 0),
+            Qt.Key.Key_Up: (0, -SUB_GRID),
+            Qt.Key.Key_Down: (0, SUB_GRID),
+        }
+        if key in arrow_keys:
+            dx, dy = arrow_keys[key]
+            sel_sym = [it for it in self.selectedItems() if it in self._sym_items]
+            sel_pins = [it for it in self.selectedItems() if isinstance(it, _PinMarker)]
+            if sel_sym or sel_pins:
+                before = self._snapshot()
+                for it in sel_sym:
+                    idx = self._sym_items.index(it)
+                    cmd = self.sym_cmds[idx]
+                    cmd.x1 += dx
+                    cmd.y1 += dy
+                    if cmd.kind == "line":
+                        cmd.x2 += dx
+                        cmd.y2 += dy
+                for p in sel_pins:
+                    p.setPos(p.pos() + QPointF(dx, dy))
+                self._restore_snapshot(self._snapshot())
+                self._push_undo("Move", before, self._snapshot())
+            return
+
+        super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------
+    # Pin placement
+    # ------------------------------------------------------------------
+
     def _place_pin(self, pos: QPointF) -> None:
         marker = _PinMarker(pos, f"P{len(self.pins) + 1}")
         self.addItem(marker)
@@ -175,6 +457,7 @@ class _SymbolScene(QGraphicsScene):
             self.removeItem(item)
         self.pins.clear()
         self.sym_cmds.clear()
+        self._sym_items.clear()
         self._line_start = None
         self._temp_item = None
         self._draw_origin()
@@ -184,16 +467,21 @@ class _SymbolScene(QGraphicsScene):
         pen = QPen(QColor("#111111"), 2)
         for cmd in udef.symbol:
             if cmd.kind == "line":
-                self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
+                it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
             elif cmd.kind == "rect":
-                self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h),
-                             pen, QBrush(Qt.BrushStyle.NoBrush))
+                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h),
+                                  pen, QBrush(Qt.BrushStyle.NoBrush))
             elif cmd.kind == "ellipse":
                 # cmd.x1/y1 is the centre; cmd.w/h is the bounding rect size
                 rx, ry = cmd.w / 2, cmd.h / 2
-                self.addEllipse(
+                it = self.addEllipse(
                     QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h),
                     pen, QBrush(Qt.BrushStyle.NoBrush))
+            else:
+                it = self.addLine(0, 0, 0, 0, pen)
+            it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+            self._sym_items.append(it)
         self.sym_cmds = list(udef.symbol)
         for p in udef.pins:
             marker = _PinMarker(QPointF(p.x, p.y), p.name)
@@ -216,6 +504,103 @@ class _PinMarker(QGraphicsEllipseItem):
         lbl.setDefaultTextColor(QColor("#0044aa"))
         lbl.setFont(QFont("monospace", 6))
         lbl.setPos(r + 1, -r)
+
+
+# ---------------------------------------------------------------------------
+# Issue 8: Floating icon toolbar that appears when hovering over the canvas
+# ---------------------------------------------------------------------------
+
+class _FloatingToolbar(QWidget):
+    """Toolbar that floats above the drawing view, visible on hover.
+
+    Each button is labelled with a unicode icon character and a short text.
+    The toolbar is positioned in the top-left of the view and is hidden by
+    default; it appears when the mouse enters the view and disappears when
+    the mouse leaves both the toolbar and the view.
+    """
+
+    # (icon char, tooltip, tool-name or action, is_action)
+    _BUTTONS: list[tuple[str, str, str, bool]] = [
+        ("⬚", "Select (Esc)", "select", False),
+        ("╱", "Draw Line", "line", False),
+        ("▭", "Draw Rect", "rect", False),
+        ("◯", "Draw Ellipse", "ellipse", False),
+        ("⊙", "Add Pin", "pin", False),
+        ("✕", "Clear Canvas", "clear", True),
+        ("↩", "Undo (Ctrl+Z)", "undo", True),
+        ("↪", "Redo (Ctrl+Y)", "redo", True),
+    ]
+
+    def __init__(self, view: QGraphicsView, scene: "_SymbolScene") -> None:
+        super().__init__(view)
+        self._scene = scene
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self._btn_map: dict[str, QPushButton] = {}
+        for icon, tip, key, is_action in self._BUTTONS:
+            btn = QPushButton(icon)
+            btn.setFixedSize(32, 32)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(
+                "QPushButton {"
+                "  background: rgba(255,255,255,200);"
+                "  border: 1px solid #aaa;"
+                "  border-radius: 4px;"
+                "  font-size: 14px;"
+                "}"
+                "QPushButton:hover { background: rgba(200,220,255,220); }"
+                "QPushButton:pressed { background: rgba(160,200,255,255); }"
+            )
+            if is_action:
+                btn.clicked.connect(
+                    lambda _checked, k=key: self._do_action(k)
+                )
+            else:
+                btn.clicked.connect(
+                    lambda _checked, k=key: self._scene.set_tool(k)
+                )
+            layout.addWidget(btn)
+            self._btn_map[key] = btn
+
+        self.adjustSize()
+        self.hide()
+
+        # Install event filters to track enter/leave on view and its viewport
+        view.installEventFilter(self)
+        view.viewport().installEventFilter(self)
+
+    def _do_action(self, action: str) -> None:
+        if action == "clear":
+            self._scene.clear_symbol()
+        elif action == "undo":
+            self._scene._undo_stack.undo()
+        elif action == "redo":
+            self._scene._undo_stack.redo()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Enter:
+            self._reposition()
+            self.show()
+            self.raise_()
+        elif event.type() == QEvent.Type.Leave:
+            # Only hide if the cursor is not over the toolbar itself
+            from PyQt6.QtGui import QCursor
+            if not self.geometry().contains(self.parent().mapFromGlobal(QCursor.pos())):  # type: ignore[arg-type]
+                self.hide()
+        elif event.type() == QEvent.Type.Resize:
+            self._reposition()
+        return False
+
+    def leaveEvent(self, event: Any) -> None:
+        self.hide()
+        super().leaveEvent(event)
+
+    def _reposition(self) -> None:
+        """Place the toolbar in the top-left corner of the parent view."""
+        self.move(8, 8)
 
 
 # ---------------------------------------------------------------------------
@@ -244,36 +629,34 @@ class UserComponentEditorDialog(QDialog):
         root.addLayout(left, 2)
 
         lbl = QLabel(
-            "Draw symbol (click tools below).\n"
-            "Pins snap to grid and become connection points.\n"
-            "Note: built-in preset components use hardcoded rendering; "
-            "only metadata fields apply to them."
+            "Draw symbol (hover the canvas to reveal tool icons).\n"
+            "Pins snap to grid. Other shapes snap to sub-grid.\n"
+            "Keys: Del=delete  Ctrl+C/V=copy/paste  M=mirror  Arrows=move  "
+            "Ctrl+Z/Y=undo/redo  Right-click=cancel drawing."
         )
         lbl.setWordWrap(True)
         left.addWidget(lbl)
 
+        # Canvas wrapped in a container so the floating toolbar can overlay it
+        self._canvas_container = QWidget()
+        self._canvas_container.setMinimumSize(400, 400)
+        canvas_layout = QVBoxLayout(self._canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+
         self._sym_scene = _SymbolScene()
         self._sym_view = QGraphicsView(self._sym_scene)
         self._sym_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._sym_view.setMinimumSize(400, 400)
-        # Issue 2: enable mouse tracking so real-time shape preview works even
-        # when no mouse button is held (i.e. after clicking the first point).
         self._sym_view.setMouseTracking(True)
         self._sym_view.viewport().setMouseTracking(True)
-        left.addWidget(self._sym_view)
+        # Ensure the view can receive keyboard focus for shortcuts (Issues 5/6)
+        self._sym_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        canvas_layout.addWidget(self._sym_view)
+        left.addWidget(self._canvas_container, 1)
 
-        # Tool buttons
-        tool_row = QHBoxLayout()
-        for label, tool in [("Select", "select"), ("Line", "line"),
-                             ("Rect", "rect"), ("Ellipse", "ellipse"),
-                             ("Add Pin", "pin")]:
-            btn = QPushButton(label)
-            btn.clicked.connect(lambda checked, t=tool: self._sym_scene.set_tool(t))
-            tool_row.addWidget(btn)
-        clear_btn = QPushButton("Clear")
-        clear_btn.clicked.connect(self._sym_scene.clear_symbol)
-        tool_row.addWidget(clear_btn)
-        left.addLayout(tool_row)
+        # Issue 8: Floating icon toolbar (shows on hover)
+        self._float_toolbar = _FloatingToolbar(
+            self._sym_view, self._sym_scene
+        )
 
         # ── right: properties panel ───────────────────────────────────
         right = QVBoxLayout()

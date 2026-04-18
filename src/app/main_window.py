@@ -144,13 +144,9 @@ class MainWindow(QMainWindow):
             lambda: self._scene.set_mode(SceneMode.SELECT),
             checkable=True, checked=True,
         )
-        self._act_wire_mode = self._action(
-            "Draw &Wire", "W",
-            lambda: self._scene.set_mode(SceneMode.DRAW_WIRE),
-            checkable=True,
-        )
+        # Bug 1 fix: manual wire drawing is removed from the UI.
+        # DRAW_WIRE mode is kept internally for compatibility but not exposed.
         tools_menu.addAction(self._act_select_mode)
-        tools_menu.addAction(self._act_wire_mode)
         tools_menu.addSeparator()
         tools_menu.addAction(self._action(
             "Rotate Selected CW  (R)", callback=self._rotate_selected_cw))
@@ -208,8 +204,8 @@ class MainWindow(QMainWindow):
         for act in (self._act_undo, self._act_redo):
             tb.addAction(act)
         tb.addSeparator()
-        for act in (self._act_select_mode, self._act_wire_mode):
-            tb.addAction(act)
+        # Bug 1 fix: wire mode removed from toolbar
+        tb.addAction(self._act_select_mode)
         tb.addSeparator()
         for act in (self._act_zoom_in, self._act_zoom_out, self._act_fit):
             tb.addAction(act)
@@ -234,6 +230,8 @@ class MainWindow(QMainWindow):
         self._scene.set_mode(SceneMode.PLACE_COMPONENT)
         self._scene.set_pending_component(comp_type)
         self._status_mode.setText(f"Mode: PLACE {comp_type}")
+        # Bug 2 fix: grab keyboard focus so R/F/V shortcuts reach the scene
+        self._view.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_component_placed(self, comp: dict) -> None:
         self._modified = True
@@ -253,7 +251,6 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self, mode_name: str) -> None:
         self._status_mode.setText(f"Mode: {mode_name}")
         self._act_select_mode.setChecked(mode_name == "SELECT")
-        self._act_wire_mode.setChecked(mode_name == "DRAW_WIRE")
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self._status_zoom.setText(f"Zoom: {zoom * 100:.0f}%")

@@ -210,6 +210,9 @@ class CircuitScene(QGraphicsScene):
         # Clipboard for copy/paste (list of serialised component dicts)
         self._clipboard: list[dict[str, Any]] = []
 
+        # Bug 4 fix: track last mouse scene position for paste
+        self._last_mouse_scene_pos: QPointF = QPointF(0, 0)
+
         self.setBackgroundBrush(QColor("#f8f8f8"))
         self.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.selectionChanged.connect(self._on_selection_changed)
@@ -268,6 +271,9 @@ class CircuitScene(QGraphicsScene):
         pos = event.scenePos()
         sx, sy = snap_to_grid(pos.x(), pos.y())
         snapped = QPointF(sx, sy)
+
+        # Bug 4 fix: always track the last mouse scene position
+        self._last_mouse_scene_pos = pos
 
         if self._mode == SceneMode.PLACE_COMPONENT and self._ghost:
             self._ghost.setPos(snapped)
@@ -627,7 +633,7 @@ class CircuitScene(QGraphicsScene):
         end_pin: tuple[str, str],
     ) -> None:
         """Create and register a wire between two pins."""
-        wire = WireItem(start, end, wire_id=str(uuid.uuid4()))
+        wire = WireItem(start, end, wire_id=str(uuid.uuid4()), is_auto=True)
         wire.start_pin = start_pin
         wire.end_pin = end_pin
         self.addItem(wire)
@@ -918,7 +924,8 @@ class CircuitScene(QGraphicsScene):
         ctrl = modifiers & Qt.KeyboardModifier.ControlModifier
 
         # ── Shortcuts that work during component placement (ghost present) ──
-        if self._mode == SceneMode.PLACE_COMPONENT and self._ghost is not None:
+        # Bug 1 fix: work whenever a ghost is shown (incl. during palette drag)
+        if self._ghost is not None:
             if key == Qt.Key.Key_R and not ctrl:
                 self._ghost._rotate_cw()
                 return
@@ -963,21 +970,40 @@ class CircuitScene(QGraphicsScene):
                     if comp:
                         self._clipboard.append(copy.deepcopy(comp))
         elif key == Qt.Key.Key_V and ctrl:
-            # Paste clipboard components with a positional offset
+            # Bug 4 fix: Paste at the current mouse cursor position.
+            # The pasted items are kept selected so they can be immediately dragged.
             if self._clipboard:
                 before = self._take_snapshot()
-                _PASTE_OFFSET = 40.0
-                self.clearSelection()
+                # Centre the pasted group at the snapped mouse position
+                paste_cx, paste_cy = snap_to_grid(
+                    self._last_mouse_scene_pos.x(),
+                    self._last_mouse_scene_pos.y(),
+                )
+                # Find the bounding centre of the clipboard items
+                xs = [c.get("x", 0.0) for c in self._clipboard]
+                ys = [c.get("y", 0.0) for c in self._clipboard]
+                orig_cx = (min(xs) + max(xs)) / 2 if xs else 0.0
+                orig_cy = (min(ys) + max(ys)) / 2 if ys else 0.0
+                dx = paste_cx - orig_cx
+                dy = paste_cy - orig_cy
+                new_ids: list[str] = []
                 for comp_data in self._clipboard:
                     new_comp = copy.deepcopy(comp_data)
-                    new_comp["id"] = str(uuid.uuid4())
-                    new_comp["x"] = comp_data.get("x", 0.0) + _PASTE_OFFSET
-                    new_comp["y"] = comp_data.get("y", 0.0) + _PASTE_OFFSET
+                    new_id = str(uuid.uuid4())
+                    new_comp["id"] = new_id
+                    new_comp["x"] = comp_data.get("x", 0.0) + dx
+                    new_comp["y"] = comp_data.get("y", 0.0) + dy
                     m = re.match(r'^([A-Za-z_]+)', comp_data.get("ref", "X"))
                     prefix = m.group(1) if m else "X"
                     new_comp["ref"] = self.circuit.next_ref(prefix)
                     self.circuit.add_component(new_comp)
+                    new_ids.append(new_id)
                 self.rebuild_from_circuit()
+                # Select only the newly pasted items
+                self.clearSelection()
+                for it in self.items():
+                    if isinstance(it, ComponentItem) and it.component_id in new_ids:
+                        it.setSelected(True)
                 after = self._take_snapshot()
                 self._push_undo("Paste", before, after)
             return
