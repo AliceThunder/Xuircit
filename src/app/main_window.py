@@ -21,6 +21,7 @@ from ..components.base import ComponentItem
 from ..components.wire import WireItem
 from ..models.circuit import Circuit
 from ..panels.component_palette import ComponentPalette
+from ..panels.layers_panel import LayersPanel
 from ..panels.properties_panel import PropertiesPanel
 from ..panels.netlist_editor import NetlistEditor
 
@@ -52,9 +53,11 @@ class MainWindow(QMainWindow):
         self._properties = PropertiesPanel(self)
         self._netlist_editor = NetlistEditor(self)
         self._netlist_editor.set_scene(self._scene)
+        self._layers_panel = LayersPanel(self)  # Feature #6
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._palette)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._properties)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._layers_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._netlist_editor)
 
         # Status bar
@@ -150,6 +153,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._palette.toggleViewAction())
         view_menu.addAction(self._properties.toggleViewAction())
         view_menu.addAction(self._netlist_editor.toggleViewAction())
+        view_menu.addAction(self._layers_panel.toggleViewAction())
 
         # Tools
         tools_menu = mb.addMenu("&Tools")
@@ -251,6 +255,13 @@ class MainWindow(QMainWindow):
         self._scene.selection_changed_signal.connect(self._on_selection_changed)
         self._scene.mode_changed.connect(self._on_mode_changed)
         self._view.zoom_changed.connect(self._on_zoom_changed)
+        # Feature #6: layer panel
+        self._layers_panel.component_layer_toggled.connect(
+            self._scene.set_component_layer_visible)
+        self._layers_panel.annotation_layer_toggled.connect(
+            self._scene.set_annotation_layer_visible)
+        self._layers_panel.annotation_tool_selected.connect(
+            self._on_annotation_tool_selected)
 
     # ------------------------------------------------------------------
     # Slots
@@ -283,6 +294,14 @@ class MainWindow(QMainWindow):
         self._act_select_mode.setChecked(mode_name == "SELECT")
         # Issue 9: only allow rubber-band selection in SELECT mode
         self._view.set_select_mode(mode_name == "SELECT")
+
+    def _on_annotation_tool_selected(self, tool: str) -> None:
+        """Feature #6: switch scene to the selected annotation drawing tool."""
+        self._scene.set_annotation_tool(tool)
+        if tool == "select":
+            self._status_mode.setText("Mode: SELECT")
+        else:
+            self._status_mode.setText(f"Mode: ANNOTATE ({tool})")
 
     def _on_zoom_changed(self, zoom: float) -> None:
         self._status_zoom.setText(f"Zoom: {zoom * 100:.0f}%")

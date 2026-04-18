@@ -213,6 +213,19 @@ class CircuitScene(QGraphicsScene):
         # Bug 4 fix: track last mouse scene position for paste
         self._last_mouse_scene_pos: QPointF = QPointF(0, 0)
 
+        # Feature #6: Layer visibility flags
+        self._component_layer_visible: bool = True
+        self._annotation_layer_visible: bool = True
+
+        # Feature #6: Annotation layer state
+        self._annotation_tool: str = "select"   # "select", "line", "arrow", etc.
+        self._anno_start: QPointF | None = None  # Drawing start point
+        self._anno_poly_pts: list[QPointF] = []  # Polyline points
+        self._anno_poly_segs: list[Any] = []     # Temp segments
+        self._anno_temp: Any = None              # Preview item
+        self._anno_color: str = "#cc2222"
+        self._anno_fill: bool = False
+
         self.setBackgroundBrush(QColor("#f8f8f8"))
         self.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.selectionChanged.connect(self._on_selection_changed)
@@ -243,6 +256,56 @@ class CircuitScene(QGraphicsScene):
             self._ghost = item
 
     # ------------------------------------------------------------------
+    # Feature #6: Layer controls
+    # ------------------------------------------------------------------
+
+    def set_component_layer_visible(self, visible: bool) -> None:
+        """Feature #6: show/hide the component drawing layer."""
+        self._component_layer_visible = visible
+        for item in self.items():
+            from ..canvas.annotation import AnnotationItem
+            if not isinstance(item, AnnotationItem):
+                item.setVisible(visible)
+
+    def set_annotation_layer_visible(self, visible: bool) -> None:
+        """Feature #6: show/hide the annotation layer."""
+        from ..canvas.annotation import AnnotationItem
+        self._annotation_layer_visible = visible
+        for item in self.items():
+            if isinstance(item, AnnotationItem):
+                item.setVisible(visible)
+
+    def set_annotation_tool(self, tool: str) -> None:
+        """Feature #6: set the active annotation drawing tool."""
+        self._annotation_tool = tool
+        self._anno_cancel()
+
+    def set_annotation_color(self, color: str) -> None:
+        """Feature #6: set annotation drawing color."""
+        self._anno_color = color
+
+    def set_annotation_fill(self, fill: bool) -> None:
+        """Feature #6: set annotation fill mode."""
+        self._anno_fill = fill
+
+    def _anno_cancel(self) -> None:
+        """Cancel any in-progress annotation drawing."""
+        self._anno_start = None
+        if self._anno_temp is not None:
+            self.removeItem(self._anno_temp)
+            self._anno_temp = None
+        for seg in self._anno_poly_segs:
+            self.removeItem(seg)
+        self._anno_poly_segs.clear()
+        self._anno_poly_pts.clear()
+
+    def _is_annotation_mode(self) -> bool:
+        """Return True if the annotation tool is active (not 'select')."""
+        return (self._mode == SceneMode.SELECT
+                and self._annotation_tool not in ("select", "")
+                and self._annotation_layer_visible)
+
+    # ------------------------------------------------------------------
     # Mouse events
     # ------------------------------------------------------------------
 
@@ -264,6 +327,19 @@ class CircuitScene(QGraphicsScene):
             elif event.button() == Qt.MouseButton.RightButton:
                 self._cancel_wire()
             return
+
+        # Feature #6: annotation drawing
+        if self._is_annotation_mode():
+            if event.button() == Qt.MouseButton.RightButton:
+                # Right-click: finish polyline or cancel
+                if self._annotation_tool == "polyline" and len(self._anno_poly_pts) >= 2:
+                    self._anno_finish_polyline()
+                else:
+                    self._anno_cancel()
+                return
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._anno_press(snapped)
+                return
 
         super().mousePressEvent(event)
 
@@ -300,6 +376,8 @@ class CircuitScene(QGraphicsScene):
                 self._temp_wire = wire
             else:
                 self._temp_wire.update_endpoints(self._wire_start, effective_end)
+        elif self._is_annotation_mode():
+            self._anno_move(snapped)
 
         super().mouseMoveEvent(event)
 
@@ -308,6 +386,11 @@ class CircuitScene(QGraphicsScene):
             pos = event.scenePos()
             sx, sy = snap_to_grid(pos.x(), pos.y())
             self._finish_wire(QPointF(sx, sy))
+            return
+        # Feature #6: double-click finishes polyline annotation
+        if self._is_annotation_mode() and self._annotation_tool == "polyline":
+            if len(self._anno_poly_pts) >= 2:
+                self._anno_finish_polyline()
             return
         super().mouseDoubleClickEvent(event)
 
@@ -427,6 +510,113 @@ class CircuitScene(QGraphicsScene):
         self._remove_align_indicator()
         self._wire_start = None
         self._wire_start_pin = None
+
+    # ------------------------------------------------------------------
+    # Feature #6: Annotation drawing helpers
+    # ------------------------------------------------------------------
+
+    def _anno_press(self, pos: QPointF) -> None:
+        """Handle left-click for annotation drawing."""
+        from PyQt6.QtGui import QPen, QColor as QC
+        tool = self._annotation_tool
+
+        if tool == "polyline":
+            self._anno_poly_pts.append(pos)
+            if len(self._anno_poly_pts) >= 2:
+                pen = QPen(QC(self._anno_color), 2)
+                p1, p2 = self._anno_poly_pts[-2], self._anno_poly_pts[-1]
+                seg = self.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
+                self._anno_poly_segs.append(seg)
+            if self._anno_temp is not None:
+                self.removeItem(self._anno_temp)
+                self._anno_temp = None
+        elif tool in ("line", "arrow", "circle", "ellipse", "rect"):
+            if self._anno_start is None:
+                self._anno_start = pos
+            else:
+                # Commit the annotation
+                self._anno_commit(self._anno_start, pos)
+                self._anno_start = None
+                if self._anno_temp is not None:
+                    self.removeItem(self._anno_temp)
+                    self._anno_temp = None
+
+    def _anno_move(self, pos: QPointF) -> None:
+        """Update annotation preview during mouse move."""
+        from PyQt6.QtGui import QPen, QColor as QC
+        from PyQt6.QtCore import Qt as Qt_
+        tool = self._annotation_tool
+        pen = QPen(QC(self._anno_color), 1.5, Qt_.PenStyle.DashLine)
+
+        if self._anno_temp is not None:
+            self.removeItem(self._anno_temp)
+            self._anno_temp = None
+
+        if tool == "polyline" and self._anno_poly_pts:
+            last = self._anno_poly_pts[-1]
+            self._anno_temp = self.addLine(
+                last.x(), last.y(), pos.x(), pos.y(), pen)
+        elif self._anno_start is not None and tool in ("line", "arrow"):
+            s = self._anno_start
+            self._anno_temp = self.addLine(s.x(), s.y(), pos.x(), pos.y(), pen)
+        elif self._anno_start is not None and tool in ("circle", "ellipse", "rect"):
+            import math
+            s = self._anno_start
+            x1, y1 = s.x(), s.y()
+            x2, y2 = pos.x(), pos.y()
+            if tool == "circle":
+                r = math.hypot(x2 - x1, y2 - y1)
+                from PyQt6.QtCore import QRectF as QRF_
+                self._anno_temp = self.addEllipse(
+                    QRF_(x1 - r, y1 - r, 2 * r, 2 * r), pen)
+            else:
+                from PyQt6.QtCore import QRectF as QRF_
+                rx, ry = min(x1, x2), min(y1, y2)
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                if tool == "ellipse":
+                    self._anno_temp = self.addEllipse(
+                        QRF_(rx, ry, w, h), pen)
+                else:
+                    self._anno_temp = self.addRect(
+                        QRF_(rx, ry, w, h), pen)
+
+    def _anno_commit(self, start: QPointF, end: QPointF) -> None:
+        """Commit a two-point annotation (not polyline)."""
+        from ..canvas.annotation import AnnotationItem
+        tool = self._annotation_tool
+        pts = [[start.x(), start.y()], [end.x(), end.y()]]
+        item = AnnotationItem(
+            kind=tool,
+            points=pts,
+            closed=False,
+            color=self._anno_color,
+            fill=self._anno_fill,
+        )
+        if not self._annotation_layer_visible:
+            item.setVisible(False)
+        self.addItem(item)
+        # Persist in circuit
+        self.circuit.add_annotation(item.to_dict())
+
+    def _anno_finish_polyline(self) -> None:
+        """Commit the current annotation polyline."""
+        from ..canvas.annotation import AnnotationItem
+        if len(self._anno_poly_pts) < 2:
+            self._anno_cancel()
+            return
+        pts = [[p.x(), p.y()] for p in self._anno_poly_pts]
+        item = AnnotationItem(
+            kind="polyline",
+            points=pts,
+            closed=self._anno_fill,
+            color=self._anno_color,
+            fill=self._anno_fill,
+        )
+        if not self._annotation_layer_visible:
+            item.setVisible(False)
+        self.addItem(item)
+        self.circuit.add_annotation(item.to_dict())
+        self._anno_cancel()
 
     def _pin_at(self, pos: QPointF) -> tuple[str, str] | None:
         """Return (comp_id, pin_name) if a pin is near pos."""
@@ -733,7 +923,25 @@ class CircuitScene(QGraphicsScene):
         idx: dict[str, dict] = {
             c["id"]: c for c in self.circuit.components if "id" in c
         }
+        from ..canvas.annotation import AnnotationItem
+        anno_idx: dict[str, dict] = {
+            a["id"]: a for a in self.circuit.annotations if "id" in a
+        }
         for item in self.items():
+            # Feature #6: sync moved annotation positions
+            if isinstance(item, AnnotationItem):
+                aid = item.anno_id
+                if aid in anno_idx:
+                    # Update position if item was moved
+                    dp = item.pos()
+                    if dp.x() != 0 or dp.y() != 0:
+                        pts = [[p[0] + dp.x(), p[1] + dp.y()]
+                               for p in item.points]
+                        anno_idx[aid]["points"] = pts
+                        item.points = pts
+                        item.setPos(0, 0)
+                        item._rebuild_path()
+                continue
             if not isinstance(item, ComponentItem):
                 continue
             cid = item.component_id
@@ -834,6 +1042,17 @@ class CircuitScene(QGraphicsScene):
 
         # Wires are auto-generated — no need to restore from file
         self._rebuild_auto_wires()
+
+        # Feature #6: restore annotation items
+        from ..canvas.annotation import AnnotationItem
+        for anno in self.circuit.annotations:
+            try:
+                anno_item = AnnotationItem.from_dict(anno)
+                if not self._annotation_layer_visible:
+                    anno_item.setVisible(False)
+                self.addItem(anno_item)
+            except Exception:
+                pass
 
     def apply_netlist(self, netlist_text: str) -> None:
         """Parse netlist and reconstruct scene.
