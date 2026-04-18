@@ -17,6 +17,17 @@ from ..components.wire import WireItem
 from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
+# Task 6: Annotation layer snaps to a grid twice as dense as the component layer.
+# GRID_SIZE = 20 px → annotation grid = 10 px.  No grid lines are drawn for the
+# annotation layer; items just snap to this finer resolution.
+_ANNO_GRID_SIZE = GRID_SIZE // 2  # 10 px
+
+
+def _snap_anno(x: float, y: float) -> tuple[float, float]:
+    """Snap a point to the annotation layer's finer grid."""
+    g = _ANNO_GRID_SIZE
+    return round(x / g) * g, round(y / g) * g
+
 class SceneMode(Enum):
     """Operating modes for the circuit scene."""
     SELECT = auto()
@@ -268,10 +279,19 @@ class CircuitScene(QGraphicsScene):
         self._anno_poly_pts: list[QPointF] = []  # Polyline points
         self._anno_poly_segs: list[Any] = []     # Temp segments
         self._anno_temp: Any = None              # Preview item
-        self._anno_color: str = "#cc2222"
+        # Task 8: read annotation color and canvas background from settings
+        try:
+            from ..app.settings import AppSettings as _AS
+            _s = _AS()
+            self._anno_color: str = _s.annotation_color()
+            _bg = _s.canvas_bg_color()
+            self._show_grid = _s.show_grid()
+        except Exception:
+            self._anno_color = "#cc2222"
+            _bg = "#f8f8f8"
         self._anno_fill: bool = False
 
-        self.setBackgroundBrush(QColor("#f8f8f8"))
+        self.setBackgroundBrush(QColor(_bg))
         self.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.selectionChanged.connect(self._on_selection_changed)
 
@@ -383,7 +403,9 @@ class CircuitScene(QGraphicsScene):
                     self._anno_cancel()
                 return
             if event.button() == Qt.MouseButton.LeftButton:
-                self._anno_press(snapped)
+                # Task 6: snap to the denser annotation grid (half the component grid)
+                ax, ay = _snap_anno(pos.x(), pos.y())
+                self._anno_press(QPointF(ax, ay))
                 return
 
         super().mousePressEvent(event)
@@ -422,7 +444,9 @@ class CircuitScene(QGraphicsScene):
             else:
                 self._temp_wire.update_endpoints(self._wire_start, effective_end)
         elif self._is_annotation_mode():
-            self._anno_move(snapped)
+            # Task 6: snap annotation preview to finer grid
+            ax, ay = _snap_anno(pos.x(), pos.y())
+            self._anno_move(QPointF(ax, ay))
 
         super().mouseMoveEvent(event)
 

@@ -30,7 +30,7 @@ class ExportDialog(QDialog):
         form = QFormLayout()
 
         self._fmt_combo = QComboBox()
-        self._fmt_combo.addItems(["PNG", "SVG", "PDF"])
+        self._fmt_combo.addItems(["PNG", "SVG", "PDF", "Visio (SVG)"])
         self._fmt_combo.currentTextChanged.connect(self._on_format_changed)
         form.addRow("Format:", self._fmt_combo)
 
@@ -62,6 +62,10 @@ class ExportDialog(QDialog):
         visible = fmt == "PNG"
         self._dpi_label.setVisible(visible)
         self._dpi_combo.setVisible(visible)
+        if fmt == "Visio (SVG)":
+            from PyQt6.QtWidgets import QMessageBox
+            # Show a note only on first switch to this format
+            pass  # tooltip is enough
 
     def _browse(self) -> None:
         fmt = self._fmt_combo.currentText()
@@ -69,6 +73,7 @@ class ExportDialog(QDialog):
             "PNG": "PNG images (*.png)",
             "SVG": "SVG files (*.svg)",
             "PDF": "PDF files (*.pdf)",
+            "Visio (SVG)": "SVG files (*.svg)",
         }
         path, _ = QFileDialog.getSaveFileName(
             self, "Export As", "", filters.get(fmt, "All files (*)")
@@ -92,6 +97,19 @@ class ExportDialog(QDialog):
             elif fmt == "PDF":
                 from ..io.svg_exporter import export_pdf
                 export_pdf(self._scene, path)  # type: ignore[arg-type]
+            elif fmt == "Visio (SVG)":
+                from ..io.svg_exporter import export_svg
+                if not path.lower().endswith(".svg"):
+                    path += ".svg"
+                export_svg(self._scene, path)  # type: ignore[arg-type]
+                QMessageBox.information(
+                    self, "Visio Export",
+                    f"Exported to:\n{path}\n\n"
+                    "To edit in Visio: open Visio → File → Open, select the SVG file.\n"
+                    "Visio can import SVG files for secondary vector editing."
+                )
+                self.accept()
+                return
             QMessageBox.information(self, "Export", f"Exported to:\n{path}")
             self.accept()
         except Exception as exc:

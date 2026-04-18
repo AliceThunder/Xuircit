@@ -120,6 +120,9 @@ class MainWindow(QMainWindow):
         self._action("Export as P&DF…",
                      callback=lambda: self._export("PDF"),
                      parent_menu=export_menu)
+        self._action("Export for &Visio (SVG)…",
+                     callback=lambda: self._export("Visio (SVG)"),
+                     parent_menu=export_menu)
         self._action("Export &Netlist (SPICE)…",
                      callback=self._export_netlist,
                      parent_menu=export_menu)
@@ -258,6 +261,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self._palette.place_requested.connect(self._on_place_requested)
+        self._palette.library_changed.connect(self._on_library_changed)  # Task 5
         self._scene.component_placed.connect(self._on_component_placed)
         self._scene.wire_drawn.connect(self._on_wire_drawn)
         self._scene.selection_changed_signal.connect(self._on_selection_changed)
@@ -511,6 +515,12 @@ class MainWindow(QMainWindow):
         # Reset singleton and refresh palette after any changes
         LibraryManager.reset_instance()
         self._palette._populate(self._palette._search.text())
+        # Task 5: rebuild canvas so component graphics reflect the updated definitions
+        self._scene.rebuild_from_circuit()
+
+    def _on_library_changed(self) -> None:
+        """Task 5: rebuild scene when component library definitions are updated."""
+        self._scene.rebuild_from_circuit()
 
     # ------------------------------------------------------------------
     # Settings

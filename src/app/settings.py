@@ -31,6 +31,12 @@ _DEFAULTS: dict = {
     "label_font_family": "monospace",
     "label_font_size": 8,
     "shortcuts": dict(_DEFAULT_SHORTCUTS),
+    # Task 7: wire color (default black)
+    "wire_color": "#000000",
+    # Task 8: additional canvas settings
+    "annotation_color": "#cc2222",
+    "canvas_bg_color": "#f8f8f8",
+    "show_grid": True,
 }
 
 
@@ -64,6 +70,25 @@ class AppSettings:
 
     def label_font_size(self) -> int:
         return int(self.get("label_font_size", 8))
+
+    def wire_color(self) -> str:
+        """Task 7: default wire color."""
+        return str(self.get("wire_color", "#000000"))
+
+    def annotation_color(self) -> str:
+        """Task 8: default annotation color."""
+        return str(self.get("annotation_color", "#cc2222"))
+
+    def canvas_bg_color(self) -> str:
+        """Task 8: canvas background color."""
+        return str(self.get("canvas_bg_color", "#f8f8f8"))
+
+    def show_grid(self) -> bool:
+        """Task 8: whether to show the grid."""
+        val = self.get("show_grid", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).lower() not in ("false", "0", "no")
 
     # Feature #4: shortcut support
     def shortcut(self, action_id: str) -> str:

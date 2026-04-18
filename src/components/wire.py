@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 class WireItem(QGraphicsPathItem):
     """A wire between two points, auto-routed at 90° angles."""
 
-    _DEFAULT_COLOR = "#1a1a8c"
+    _DEFAULT_COLOR = "#000000"  # Task 7: default wire color is black
 
     def __init__(self, start: QPointF, end: QPointF,
                  wire_id: str | None = None,
@@ -32,8 +32,12 @@ class WireItem(QGraphicsPathItem):
         self.net_name: str = ""
         # Bug 1 fix: auto-generated wires are non-interactive
         self.is_auto: bool = is_auto
-        # Feature #8: per-wire color
-        self._color: str = self._DEFAULT_COLOR
+        # Task 7: read default wire color from settings
+        try:
+            from ..app.settings import AppSettings
+            self._color: str = AppSettings().wire_color()
+        except Exception:
+            self._color = self._DEFAULT_COLOR
 
         pen = QPen(QColor(self._color), 2.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)

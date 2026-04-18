@@ -1,15 +1,19 @@
 """Settings dialog — font, shortcuts, and other application preferences."""
 from __future__ import annotations
 
-from PyQt6.QtGui import QFont, QFontDatabase, QKeySequence
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QKeySequence
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QTabWidget,
@@ -41,13 +45,45 @@ _ACTION_LABELS: dict[str, str] = {
 }
 
 
+class _ColorButton(QWidget):
+    """Simple inline color-picker button."""
+
+    def __init__(self, color: str = "#000000",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._color = color
+        self._btn = QPushButton()
+        self._btn.setFixedWidth(80)
+        self._update_style()
+        self._btn.clicked.connect(self._pick)
+        layout.addWidget(self._btn)
+        layout.addStretch()
+
+    def _update_style(self) -> None:
+        self._btn.setStyleSheet(
+            f"background-color: {self._color}; border: 1px solid #888;"
+        )
+        self._btn.setText(self._color)
+
+    def _pick(self) -> None:
+        c = QColorDialog.getColor(QColor(self._color), self, "Pick Color")
+        if c.isValid():
+            self._color = c.name()
+            self._update_style()
+
+    def color(self) -> str:
+        return self._color
+
+
 class SettingsDialog(QDialog):
     """Application settings editor."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings — Preferences")
-        self.resize(500, 450)
+        self.resize(520, 500)
 
         settings = AppSettings()
         layout = QVBoxLayout(self)
@@ -90,7 +126,39 @@ class SettingsDialog(QDialog):
         font_layout.addStretch()
         tabs.addTab(font_tab, "Label Font")
 
-        # ── Tab 2: Keyboard Shortcuts ─────────────────────────────────
+        # ── Tab 2: Canvas ─────────────────────────────────────────────
+        canvas_tab = QWidget()
+        canvas_layout = QVBoxLayout(canvas_tab)
+
+        wire_box = QGroupBox("Wire Settings")
+        wire_form = QFormLayout(wire_box)
+        # Task 7: wire color setting
+        self._wire_color_btn = _ColorButton(settings.wire_color())
+        wire_form.addRow("Default wire color:", self._wire_color_btn)
+        canvas_layout.addWidget(wire_box)
+
+        anno_box = QGroupBox("Annotation Settings")
+        anno_form = QFormLayout(anno_box)
+        # Task 8: default annotation color
+        self._anno_color_btn = _ColorButton(settings.annotation_color())
+        anno_form.addRow("Default annotation color:", self._anno_color_btn)
+        canvas_layout.addWidget(anno_box)
+
+        bg_box = QGroupBox("Canvas Appearance")
+        bg_form = QFormLayout(bg_box)
+        # Task 8: canvas background color
+        self._bg_color_btn = _ColorButton(settings.canvas_bg_color())
+        bg_form.addRow("Canvas background color:", self._bg_color_btn)
+        # Task 8: grid visibility
+        self._show_grid_cb = QCheckBox("Show grid lines")
+        self._show_grid_cb.setChecked(settings.show_grid())
+        bg_form.addRow("Grid:", self._show_grid_cb)
+        canvas_layout.addWidget(bg_box)
+
+        canvas_layout.addStretch()
+        tabs.addTab(canvas_tab, "Canvas")
+
+        # ── Tab 3: Keyboard Shortcuts ─────────────────────────────────
         shortcuts_tab = QWidget()
         shortcuts_layout = QVBoxLayout(shortcuts_tab)
 
@@ -140,6 +208,14 @@ class SettingsDialog(QDialog):
         new_font = QFont(self._family_combo.currentText(),
                          self._size_spin.value())
         LabelItem.set_label_font(new_font)
+
+        # Task 7: save wire color
+        settings.set("wire_color", self._wire_color_btn.color())
+
+        # Task 8: save canvas settings
+        settings.set("annotation_color", self._anno_color_btn.color())
+        settings.set("canvas_bg_color", self._bg_color_btn.color())
+        settings.set("show_grid", self._show_grid_cb.isChecked())
 
         # Save shortcut settings
         for action_id, edit in self._shortcut_edits.items():
