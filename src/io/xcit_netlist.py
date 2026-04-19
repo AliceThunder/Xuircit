@@ -29,6 +29,7 @@ valid SPICE netlist.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -53,6 +54,55 @@ _TYPE_PREFIX: dict[str, str] = {
 _VIRTUAL_TYPES: frozenset[str] = frozenset({
     "GND", "NETLABEL", "JUNCTION", "ELBOW", "TEE",
 })
+
+# Issue 9: default colors — omit from JSON metadata when values match defaults.
+# Prefer the rendering-layer definitions to avoid drift, but keep the current
+# literals as a compatibility fallback when those modules are unavailable.
+_FALLBACK_DEFAULT_COMPONENT_COLOR: str = "#111111"
+_FALLBACK_DEFAULT_LABEL_COLOR: str = "#333333"
+
+
+def _resolve_default_color(
+    module_names: tuple[str, ...],
+    attribute_names: tuple[str, ...],
+    fallback: str,
+) -> str:
+    """Resolve a default color from one of several modules/attributes.
+
+    This keeps XCIT serialization aligned with the rendering-layer defaults
+    without making the serializer fail if those UI modules are unavailable.
+    """
+    for module_name in module_names:
+        try:
+            module = importlib.import_module(module_name, package=__package__)
+        except Exception:
+            continue
+        for attribute_name in attribute_names:
+            value = getattr(module, attribute_name, None)
+            if isinstance(value, str) and value:
+                return value
+    return fallback
+
+
+_DEFAULT_COMPONENT_COLOR: str = _resolve_default_color(
+    ("..components.base",),
+    ("_DEFAULT_COMPONENT_COLOR", "DEFAULT_COMPONENT_COLOR"),
+    _FALLBACK_DEFAULT_COMPONENT_COLOR,
+)
+_DEFAULT_LABEL_COLOR: str = _resolve_default_color(
+    (
+        "..components.label_item",
+        "..components.label",
+        "..components.base",
+    ),
+    (
+        "_DEFAULT_LABEL_COLOR",
+        "DEFAULT_LABEL_COLOR",
+        "_DEFAULT_COMPONENT_COLOR",
+        "DEFAULT_COMPONENT_COLOR",
+    ),
+    _FALLBACK_DEFAULT_LABEL_COLOR,
+)
 
 _DEFAULT_NODES: dict[str, list[str]] = {
     "R":      ["N001", "N002"],
@@ -191,7 +241,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
     lines.append(".xcit_layout")
     lines.append(
         "* ref  x  y  rotation  flip_h  flip_v  library_id  type_name"
-        "  label_ref_dx  label_ref_dy  label_val_dx  label_val_dy"
+        "  label_ref_dx  label_ref_dy  label_val_dx  label_val_dy  [json_meta]"
     )
     for comp in circuit.components:
         ctype = comp.get("type", "R")
@@ -207,9 +257,18 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         lib_str = lib_id or "preset"
         lrp = comp.get("label_ref_pos", [0.0, -22.0])
         lvp = comp.get("label_val_pos", [0.0, 14.0])
+        # Issue 9: include component color and label colors as optional JSON metadata
+        meta: dict[str, Any] = {}
+        if comp.get("color") and comp["color"] != _DEFAULT_COMPONENT_COLOR:
+            meta["c"] = comp["color"]
+        if comp.get("label_ref_color") and comp["label_ref_color"] != _DEFAULT_LABEL_COLOR:
+            meta["lrc"] = comp["label_ref_color"]
+        if comp.get("label_val_color") and comp["label_val_color"] != _DEFAULT_LABEL_COLOR:
+            meta["lvc"] = comp["label_val_color"]
+        meta_str = ("  " + json.dumps(meta, separators=(",", ":"))) if meta else ""
         lines.append(
             f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_str}  {ctype}"
-            f"  {lrp[0]:.2f}  {lrp[1]:.2f}  {lvp[0]:.2f}  {lvp[1]:.2f}"
+            f"  {lrp[0]:.2f}  {lrp[1]:.2f}  {lvp[0]:.2f}  {lvp[1]:.2f}{meta_str}"
         )
     lines.append(".end_xcit_layout")
     lines.append("")
@@ -377,6 +436,14 @@ def parse_xcit_netlist(
                 if len(parts) >= idx + 2 else [0.0, -22.0]
             lvp = [float(parts[idx + 2]), float(parts[idx + 3])] \
                 if len(parts) >= idx + 4 else [0.0, 14.0]
+            # Issue 9: parse optional JSON metadata at end of line
+            meta: dict[str, Any] = {}
+            json_idx = idx + 4
+            if len(parts) > json_idx and parts[json_idx].startswith("{"):
+                try:
+                    meta = json.loads(" ".join(parts[json_idx:]))
+                except (json.JSONDecodeError, ValueError):
+                    pass
         except (ValueError, IndexError):
             continue
         positions[ref] = {
@@ -388,6 +455,10 @@ def parse_xcit_netlist(
             "type_name": type_name,
             "label_ref_pos": lrp,
             "label_val_pos": lvp,
+            # Issue 9: optional color metadata from JSON field
+            "color": meta.get("c"),
+            "label_ref_color": meta.get("lrc"),
+            "label_val_color": meta.get("lvc"),
         }
 
     # Parse .xcit_virtual section (Issue 5)
