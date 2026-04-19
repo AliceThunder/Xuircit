@@ -93,8 +93,17 @@ class LabelItem(QGraphicsSimpleTextItem):
         """Change the default font for all subsequently created labels."""
         cls._label_font = font
 
-    def __init__(self, text: str, parent: "ComponentItem") -> None:
+    def __init__(
+        self,
+        text: str,
+        parent: "ComponentItem",
+        edit_info: tuple | None = None,
+    ) -> None:
         super().__init__(text, parent)
+        # Bug 9: optional (role, key) used to route double-click edits back
+        # to the parent component.  role ∈ {"ref", "val", "extra"}; key is
+        # the property name for "extra", None for "ref"/"val".
+        self._edit_info = edit_info
         self.setFont(self._label_font)
         self.setBrush(QBrush(QColor("#333333")))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -217,6 +226,45 @@ class LabelItem(QGraphicsSimpleTextItem):
                 scene.update(scene.sceneRect())
         return super().itemChange(change, value)
 
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Bug 9: double-click opens an inline edit dialog when Label Drag is on."""
+        if not LabelItem._dragging_enabled:
+            event.ignore()
+            return
+        if self._edit_info is None:
+            super().mouseDoubleClickEvent(event)
+            return
+        role = self._edit_info[0]
+        parent = self.parentItem()
+        if parent is None:
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        if role == "ref":
+            new_text, ok = QInputDialog.getText(
+                None, "Edit Reference", "Reference:", text=parent.ref  # type: ignore[arg-type]
+            )
+            if ok:
+                parent.ref = new_text.strip()
+                parent._refresh_labels()
+        elif role == "val":
+            new_text, ok = QInputDialog.getText(
+                None, "Edit Value", "Value:", text=parent.value  # type: ignore[arg-type]
+            )
+            if ok:
+                parent.value = new_text.strip()
+                parent._refresh_labels()
+        elif role == "extra":
+            prop_name = self._edit_info[1]
+            current = parent.params.get(prop_name, self.text())  # type: ignore[union-attr]
+            new_text, ok = QInputDialog.getText(
+                None, f"Edit {prop_name}", f"{prop_name}:",  # type: ignore[arg-type]
+                text=current
+            )
+            if ok:
+                parent.params[prop_name] = new_text.strip()  # type: ignore[union-attr]
+                parent._refresh_labels()
+        event.accept()
+
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         """Issue 2: prevent independent label drag during batch selection.
         Issue 8: respect the global label-dragging switch."""
@@ -321,11 +369,11 @@ class ComponentItem(QGraphicsItem):
         self._build_pins()
 
         # Draggable, always-upright labels
-        self._ref_label = LabelItem(self.ref, self)
+        self._ref_label = LabelItem(self.ref, self, edit_info=("ref", None))
         self._ref_label.setPos(QPointF(*self._ref_label_offset))
         self._ref_label.setVisible(self._show_ref_label and self._ref_visible)
 
-        self._val_label = LabelItem(self.value, self)
+        self._val_label = LabelItem(self.value, self, edit_info=("val", None))
         self._val_label.setPos(QPointF(*self._val_label_offset))
         self._val_label.setVisible(
             bool(self.value) and self._show_val_label and self._val_visible

@@ -1,7 +1,7 @@
 """MainWindow — top-level application window."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QEvent, QObject
 from PyQt6.QtGui import QAction, QKeySequence, QUndoStack
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -10,8 +10,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStatusBar,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -26,7 +28,163 @@ from ..panels.properties_panel import PropertiesPanel
 from ..panels.netlist_editor import NetlistEditor
 
 
-class MainWindow(QMainWindow):
+# ---------------------------------------------------------------------------
+# Bug 7: Floating annotation toolbar overlay for the main canvas
+# ---------------------------------------------------------------------------
+
+class _CanvasAnnotationToolbar(QWidget):
+    """Semi-transparent floating toolbar that hovers over the circuit canvas.
+
+    It provides icon buttons for annotation tools and the fill/layer toggles,
+    so the user doesn't need to look at the Layers dock panel while drawing.
+    The toolbar auto-hides when the cursor leaves the canvas area and
+    reappears when it enters.
+    """
+
+    _TOOLS = [
+        ("⬚", "select",   "Select / move annotations"),
+        ("╱", "line",     "Draw a straight line"),
+        ("→", "arrow",    "Draw an arrow"),
+        ("◯", "circle",   "Draw a circle"),
+        ("⬭", "ellipse",  "Draw an ellipse"),
+        ("▭", "rect",     "Draw a rectangle"),
+        ("⌇", "polyline", "Draw a polyline (right-click to finish)"),
+        ("✎", "text",     "Place a text annotation"),
+    ]
+    _BTN_SIZE = 36
+
+    def __init__(self, view: CircuitView, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._view = view
+        self._current_tool = "select"
+        self._btns: dict[str, QPushButton] = {}
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowFlags(Qt.WindowType.SubWindow)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        for icon, tool_id, tip in self._TOOLS:
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(self._BTN_SIZE, self._BTN_SIZE)
+            btn.setCheckable(True)
+            btn.setChecked(tool_id == "select")
+            btn.setStyleSheet(self._btn_style(tool_id == "select"))
+            btn.clicked.connect(lambda checked=False, t=tool_id: self._on_tool(t))
+            self._btns[tool_id] = btn
+            layout.addWidget(btn)
+
+        # Fill toggle
+        self._fill_btn = QPushButton("■")
+        self._fill_btn.setToolTip("Toggle solid fill for closed shapes")
+        self._fill_btn.setFixedSize(self._BTN_SIZE, self._BTN_SIZE)
+        self._fill_btn.setCheckable(True)
+        self._fill_btn.setChecked(False)
+        self._fill_btn.setStyleSheet(self._btn_style(False))
+        self._fill_btn.clicked.connect(self._on_fill_toggled)
+        layout.addWidget(self._fill_btn)
+
+        self.adjustSize()
+        self.move(8, 8)
+        self.hide()
+
+        # Install event filter on the view's viewport to track hover
+        view.viewport().installEventFilter(self)
+
+    # ------------------------------------------------------------------
+    # Styling helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _btn_style(active: bool) -> str:
+        if active:
+            return (
+                "QPushButton {"
+                "  background: rgba(50,100,220,200);"
+                "  border: 2px solid #3355cc;"
+                "  border-radius: 5px;"
+                "  font-size: 16px;"
+                "  color: white;"
+                "}"
+            )
+        return (
+            "QPushButton {"
+            "  background: rgba(60,60,60,160);"
+            "  border: 1px solid #555;"
+            "  border-radius: 5px;"
+            "  font-size: 16px;"
+            "  color: #ddd;"
+            "}"
+            "QPushButton:hover {"
+            "  background: rgba(90,90,90,200);"
+            "  border: 1px solid #888;"
+            "}"
+        )
+
+    def _set_active(self, tool_id: str) -> None:
+        self._current_tool = tool_id
+        for t, btn in self._btns.items():
+            btn.setStyleSheet(self._btn_style(t == tool_id))
+            btn.setChecked(t == tool_id)
+
+    # ------------------------------------------------------------------
+    # Tool signals
+    # ------------------------------------------------------------------
+
+    def _on_tool(self, tool_id: str) -> None:
+        self._set_active(tool_id)
+        # Notify whoever connected the signal (main window → scene)
+        if hasattr(self, "_tool_callback") and self._tool_callback is not None:
+            self._tool_callback(tool_id)  # type: ignore[misc]
+
+    def _on_fill_toggled(self) -> None:
+        active = self._fill_btn.isChecked()
+        self._fill_btn.setStyleSheet(self._btn_style(active))
+        if hasattr(self, "_fill_callback") and self._fill_callback is not None:
+            self._fill_callback(active)  # type: ignore[misc]
+
+    def connect_tool_callback(self, cb: object) -> None:
+        self._tool_callback = cb  # type: ignore[attr-defined]
+
+    def connect_fill_callback(self, cb: object) -> None:
+        self._fill_callback = cb  # type: ignore[attr-defined]
+
+    def set_active_tool(self, tool_id: str) -> None:
+        """Called externally when the tool changes (e.g. from Layers panel)."""
+        self._set_active(tool_id)
+
+    # ------------------------------------------------------------------
+    # Hover show/hide
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj is self._view.viewport():
+            if event.type() == QEvent.Type.Enter:
+                self._reposition()
+                self.show()
+                self.raise_()
+            elif event.type() == QEvent.Type.Leave:
+                from PyQt6.QtGui import QCursor
+                gp = QCursor.pos()
+                lp = self.mapFromGlobal(gp)
+                if not self.rect().contains(lp):
+                    self.hide()
+            elif event.type() == QEvent.Type.Resize:
+                self._reposition()
+        return False
+
+    def leaveEvent(self, event: object) -> None:
+        self.hide()
+        super().leaveEvent(event)  # type: ignore[arg-type]
+
+    def _reposition(self) -> None:
+        self.move(8, 8)
+
+
+
     """Main application window for Xuircit."""
 
     def __init__(self) -> None:
@@ -59,6 +217,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._properties)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._layers_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._netlist_editor)
+
+        # Bug 7: floating annotation toolbar overlaid on the canvas view
+        self._anno_toolbar = _CanvasAnnotationToolbar(self._view, self._view)
+        self._anno_toolbar.connect_tool_callback(self._on_annotation_tool_selected)
+        self._anno_toolbar.connect_fill_callback(self._scene.set_annotation_fill)
 
         # Status bar
         self._status_mode = QLabel("Mode: SELECT")
@@ -280,6 +443,8 @@ class MainWindow(QMainWindow):
         # Fix 9: reset annotation tool to select when ESC is pressed
         self._scene.annotation_tool_reset.connect(
             self._layers_panel.reset_annotation_tool)
+        self._scene.annotation_tool_reset.connect(
+            lambda: self._anno_toolbar.set_active_tool("select"))
 
     # ------------------------------------------------------------------
     # Slots
@@ -331,6 +496,8 @@ class MainWindow(QMainWindow):
     def _on_annotation_tool_selected(self, tool: str) -> None:
         """Feature #6: switch scene to the selected annotation drawing tool."""
         self._scene.set_annotation_tool(tool)
+        # Bug 7: keep floating toolbar in sync
+        self._anno_toolbar.set_active_tool(tool)
         # Fix 7: update cursor for annotation mode
         from PyQt6.QtCore import Qt as Qt_
         if tool == "select":

@@ -91,6 +91,12 @@ class UserComponentItem(ComponentItem):
         super().__init__(udef.type_name, ref, value, params, comp_id,
                          library_id=library_id)
 
+        # Bug 2: hide ref/val labels for virtual (wire-connector) components
+        if udef.is_virtual:
+            self._show_ref_label = False
+            self._show_val_label = False
+            self._refresh_labels()
+
         # Feature 7: apply per-label styles to ref and val labels
         _apply_label_style(self._ref_label, udef.ref_label_style)
         _apply_label_style(self._val_label, udef.val_label_style)
@@ -105,7 +111,7 @@ class UserComponentItem(ComponentItem):
         for ldef in udef.labels:
             # Display the instance value from params; fall back to default_value
             display_text = self.params.get(ldef.text, ldef.default_value)
-            item = LabelItem(display_text, self)
+            item = LabelItem(display_text, self, edit_info=("extra", ldef.text))
             # Feature 7: apply per-label style
             style = {
                 "font_family": ldef.font_family,

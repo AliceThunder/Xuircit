@@ -572,7 +572,13 @@ class _SymbolScene(QGraphicsScene):
     # ------------------------------------------------------------------
 
     def _place_pin(self, pos: QPointF) -> None:
-        marker = _PinMarker(pos, f"P{len(self.pins) + 1}")
+        # Bug 5: use max(existing_P{n}) + 1 to avoid duplicate pin names
+        max_n = 0
+        for p in self.pins:
+            name = p.pin_name
+            if name.startswith("P") and name[1:].isdigit():
+                max_n = max(max_n, int(name[1:]))
+        marker = _PinMarker(pos, f"P{max_n + 1}")
         self.addItem(marker)
         self.pins.append(marker)
 
@@ -693,7 +699,14 @@ class _SymbolScene(QGraphicsScene):
 
 
 class _PinMarker(QGraphicsEllipseItem):
-    """Visible pin marker on the symbol editor canvas."""
+    """Visible pin marker on the symbol editor canvas.
+
+    Bug 1 fix: the pin-name label is drawn in paint() with a counter-rotation
+    so it always appears upright regardless of the canvas view rotation
+    (e.g. when V-perspective is active and the view is rotated 90°).
+
+    Bug 4 fix: pin dragging snaps to the main grid (GRID_SIZE) via itemChange.
+    """
     def __init__(self, pos: QPointF, name: str) -> None:
         r = 5
         super().__init__(-r, -r, 2 * r, 2 * r)
@@ -703,10 +716,44 @@ class _PinMarker(QGraphicsEllipseItem):
         self.setBrush(QBrush(QColor("#aaccff")))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-        lbl = QGraphicsTextItem(name, self)
-        lbl.setDefaultTextColor(QColor("#0044aa"))
-        lbl.setFont(QFont("monospace", 6))
-        lbl.setPos(r + 1, -r)
+        # Bug 4: enable geometry-change notifications for snapping
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+    def boundingRect(self) -> QRectF:
+        # Extend bounding rect to cover the label text at (r+1, -r).
+        r = 5
+        return QRectF(-r - 2, -r - 2, 80, r * 2 + 16)
+
+    def paint(self, painter: QPainter, option: object, widget: object = None) -> None:
+        import math
+        # Draw the ellipse via the parent class
+        super().paint(painter, option, widget)
+        # Bug 1: counter-rotate the pin-name text so it stays upright
+        wt = painter.worldTransform()
+        det = wt.m11() * wt.m22() - wt.m12() * wt.m21()
+        if det < 0:
+            angle_deg = math.degrees(math.atan2(-wt.m12(), -wt.m11()))
+        else:
+            angle_deg = math.degrees(math.atan2(wt.m12(), wt.m11()))
+        r = 5
+        painter.save()
+        painter.rotate(-angle_deg)
+        painter.setPen(QPen(QColor("#0044aa"), 1))
+        painter.setFont(QFont("monospace", 6))
+        painter.drawText(QPointF(r + 2, 4), self.pin_name)
+        painter.restore()
+
+    def itemChange(
+        self, change: QGraphicsItem.GraphicsItemChange, value: object
+    ) -> object:
+        # Bug 4: snap dragged pin positions to the main grid
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            from ..canvas.grid import GRID_SIZE as _GS
+            p = value  # type: ignore[assignment]
+            sx = round(p.x() / _GS) * _GS  # type: ignore[union-attr]
+            sy = round(p.y() / _GS) * _GS  # type: ignore[union-attr]
+            return QPointF(sx, sy)
+        return super().itemChange(change, value)
 
 
 class _PropertyMarkerItem(QGraphicsItem):
@@ -741,6 +788,7 @@ class _PropertyMarkerItem(QGraphicsItem):
         option: "object",
         widget: "object" = None,
     ) -> None:
+        import math
         # Draw a distinctive diamond marker + label text
         pen = QPen(self._color, 1.5)
         painter.setPen(pen)
@@ -752,10 +800,19 @@ class _PropertyMarkerItem(QGraphicsItem):
         ])
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(diamond)
-        # Label
+        # Bug 1: counter-rotate the label text so it stays upright
+        wt = painter.worldTransform()
+        det = wt.m11() * wt.m22() - wt.m12() * wt.m21()
+        if det < 0:
+            angle_deg = math.degrees(math.atan2(-wt.m12(), -wt.m11()))
+        else:
+            angle_deg = math.degrees(math.atan2(wt.m12(), wt.m11()))
+        painter.save()
+        painter.rotate(-angle_deg)
         painter.setPen(QPen(self._color, 1))
         painter.setFont(QFont("monospace", 7))
         painter.drawText(QPointF(s + 3, 4), self._label)
+        painter.restore()
 
     def itemChange(
         self, change: "QGraphicsItem.GraphicsItemChange", value: "object"
@@ -1040,7 +1097,7 @@ class UserComponentEditorDialog(QDialog):
         self._value_edit = QLineEdit()
         form.addRow("Default value:", self._value_edit)
 
-        # Fix 3: virtual component type
+        # Bug 2: virtual component type
         self._virtual_cb = QCheckBox(
             "Virtual component (wiring helper, no SPICE element)")
         self._virtual_cb.setToolTip(
@@ -1052,7 +1109,8 @@ class UserComponentEditorDialog(QDialog):
         right.addWidget(form_box)
 
         # Fix 8: Label position defaults with perspective support (Feature 8)
-        label_pos_box = QGroupBox("Default Label Positions & Styles")
+        self._label_pos_box = QGroupBox("Default Label Positions & Styles")
+        label_pos_box = self._label_pos_box
         label_pos_form = QFormLayout(label_pos_box)
 
         # Feature 8: perspective toggle (H = normal, V = rotated 90°)
@@ -1187,7 +1245,8 @@ class UserComponentEditorDialog(QDialog):
         right.addWidget(pin_box)
 
         # ── Issue 12: Extra Properties section (renamed from Extra Labels) ──
-        label_box = QGroupBox("Extra Properties (beyond Ref/Value)")
+        self._label_box = QGroupBox("Extra Properties (beyond Ref/Value)")
+        label_box = self._label_box
         label_layout = QVBoxLayout(label_box)
         self._label_list = QListWidget()
         self._label_list.setToolTip(
@@ -1341,6 +1400,17 @@ class UserComponentEditorDialog(QDialog):
         # Feature 8: perspective toggle
         self._persp_h_rb.toggled.connect(self._on_perspective_changed)
         self._persp_v_rb.toggled.connect(self._on_perspective_changed)
+        # Bug 2: disable label settings when virtual component is checked
+        self._virtual_cb.stateChanged.connect(self._on_virtual_changed)
+        # Apply initial state in case existing component is virtual
+        if existing and getattr(existing, "is_virtual", False):
+            self._on_virtual_changed(True)
+
+    def _on_virtual_changed(self, state: object) -> None:
+        """Bug 2: disable label settings when 'Virtual Component' is checked."""
+        is_virtual = bool(self._virtual_cb.isChecked())
+        self._label_pos_box.setEnabled(not is_virtual)
+        self._label_box.setEnabled(not is_virtual)
 
     def _is_v_perspective(self) -> bool:
         """Feature 8: return True if the vertical (rotated) perspective is active."""

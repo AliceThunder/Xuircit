@@ -165,6 +165,19 @@ class PropertiesPanel(QDockWidget):
         self._placeholder.setVisible(False)
         self._form_widget.setVisible(True)
 
+        # Bug 2: disable property editing for virtual components
+        from ..components.user_component import UserComponentItem
+        is_virtual = isinstance(item, UserComponentItem) and item._udef.is_virtual
+        self._ref_edit.setEnabled(not is_virtual)
+        self._val_edit.setEnabled(not is_virtual)
+        self._apply_btn.setEnabled(not is_virtual)
+        if is_virtual:
+            self._ref_edit.setToolTip("Virtual components do not have editable properties.")
+            self._val_edit.setToolTip("Virtual components do not have editable properties.")
+        else:
+            self._ref_edit.setToolTip("")
+            self._val_edit.setToolTip("")
+
     def _pick_color(self) -> None:
         """Feature #7: open color dialog and apply to component."""
         from ..components.base import ComponentItem
