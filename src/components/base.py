@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -360,6 +360,8 @@ class ComponentItem(QGraphicsItem):
         self._drag_start: QPointF | None = None
         self._drag_orig_pos: QPointF | None = None
         self._dragging: bool = False
+        # Debounce flag for live auto-wire rebuilds during drag.
+        self._auto_wire_rebuild_scheduled: bool = False
 
         # Flip state tracked explicitly so serialisation is unambiguous
         self._flip_h_active: bool = False
@@ -515,9 +517,21 @@ class ComponentItem(QGraphicsItem):
                 new_x = snap(self._drag_orig_pos.x() + delta.x())
                 new_y = snap(self._drag_orig_pos.y() + delta.y())
                 self.setPos(QPointF(new_x, new_y))
+            scene = self.scene()
+            if scene is not None and hasattr(scene, "_rebuild_auto_wires") \
+                    and not self._auto_wire_rebuild_scheduled:
+                self._auto_wire_rebuild_scheduled = True
+                QTimer.singleShot(50, self._do_rebuild_auto_wires)
             event.accept()
             return
         super().mouseMoveEvent(event)
+
+    def _do_rebuild_auto_wires(self) -> None:
+        """Deferred callback: rebuild auto-wires once after a burst of drag events."""
+        self._auto_wire_rebuild_scheduled = False
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "_rebuild_auto_wires"):
+            scene._rebuild_auto_wires()  # type: ignore[union-attr]
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         was_dragging = self._dragging
@@ -661,7 +675,10 @@ class ComponentItem(QGraphicsItem):
     # ------------------------------------------------------------------
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
-        _open_properties(self)
+        self.setSelected(True)
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "focus_properties_for_item"):
+            scene.focus_properties_for_item(self)
         super().mouseDoubleClickEvent(event)
 
     # ------------------------------------------------------------------

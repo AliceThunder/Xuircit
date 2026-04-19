@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGraphicsItem,
     QGraphicsPathItem,
+    QGraphicsSceneMouseEvent,
     QGraphicsSceneContextMenuEvent,
     QGraphicsTextItem,
     QMenu,
@@ -24,12 +25,14 @@ from PyQt6.QtWidgets import (
 )
 
 from ..components.wire import _qt_style as _line_style_qt
+from ..canvas.grid import GRID_SIZE
 
 # Z-value for annotation items (above components)
 ANNOTATION_Z = 20
 
 # Default annotation color
 _DEFAULT_ANNO_COLOR = "#cc2222"
+_ANNO_GRID_SIZE = GRID_SIZE // 4
 
 
 class AnnotationItem(QGraphicsPathItem):
@@ -67,6 +70,7 @@ class AnnotationItem(QGraphicsPathItem):
         self.setZValue(ANNOTATION_Z)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         self._rebuild_path()
 
     # ------------------------------------------------------------------
@@ -153,11 +157,27 @@ class AnnotationItem(QGraphicsPathItem):
     # ------------------------------------------------------------------
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        if not self.isSelected():
+            scene = self.scene()
+            if scene is not None:
+                scene.clearSelection()
+            self.setSelected(True)
         menu = QMenu()
         menu.addAction("Set Color…").triggered.connect(self._set_color)
+        menu.addAction("Properties…").triggered.connect(self._open_properties_panel)
         menu.addSeparator()
         menu.addAction("Delete").triggered.connect(self._delete_self)
         menu.exec(event.screenPos())
+
+    def _open_properties_panel(self) -> None:
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "focus_properties_for_item"):
+            scene.focus_properties_for_item(self)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        self.setSelected(True)
+        self._open_properties_panel()
+        super().mouseDoubleClickEvent(event)
 
     def _set_color(self) -> None:
         color = QColorDialog.getColor(
@@ -181,6 +201,27 @@ class AnnotationItem(QGraphicsPathItem):
         if width is not None:
             self.line_width = max(0.5, float(width))
         self._rebuild_path()
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            return QPointF(
+                round(value.x() / _ANNO_GRID_SIZE) * _ANNO_GRID_SIZE,
+                round(value.y() / _ANNO_GRID_SIZE) * _ANNO_GRID_SIZE,
+            )
+        return super().itemChange(change, value)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            sel_pen = QPen(QColor("#ff8800"), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.boundingRect())
 
     def _delete_self(self) -> None:
         scene = self.scene()
@@ -283,6 +324,7 @@ class TextAnnotationItem(QGraphicsTextItem):
         self.setZValue(ANNOTATION_Z)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
     # Expose points as a convenience (x, y of origin) for sync_to_circuit
     @property
@@ -290,12 +332,23 @@ class TextAnnotationItem(QGraphicsTextItem):
         return [[self.pos().x(), self.pos().y()]]
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        if not self.isSelected():
+            scene = self.scene()
+            if scene is not None:
+                scene.clearSelection()
+            self.setSelected(True)
         menu = QMenu()
         menu.addAction("Edit…").triggered.connect(self._edit_text)
         menu.addAction("Set Default Color…").triggered.connect(self._set_color)
+        menu.addAction("Properties…").triggered.connect(self._open_properties_panel)
         menu.addSeparator()
         menu.addAction("Delete").triggered.connect(self._delete_self)
         menu.exec(event.screenPos())
+
+    def _open_properties_panel(self) -> None:
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "focus_properties_for_item"):
+            scene.focus_properties_for_item(self)
 
     def _edit_text(self) -> None:
         scene = self.scene()
@@ -384,6 +437,32 @@ class TextAnnotationItem(QGraphicsTextItem):
             # For compatibility with AnnotationItem.from_dict dispatcher
             "points": [[self.pos().x(), self.pos().y()]],
         }
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            return QPointF(
+                round(value.x() / _ANNO_GRID_SIZE) * _ANNO_GRID_SIZE,
+                round(value.y() / _ANNO_GRID_SIZE) * _ANNO_GRID_SIZE,
+            )
+        return super().itemChange(change, value)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        self.setSelected(True)
+        self._open_properties_panel()
+        super().mouseDoubleClickEvent(event)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            sel_pen = QPen(QColor("#ff8800"), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.boundingRect())
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TextAnnotationItem":
