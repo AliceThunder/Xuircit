@@ -198,6 +198,8 @@ class CircuitScene(QGraphicsScene):
         self._pending_type: str = ""
         self._pending_library_id: str | None = None
         self._ghost: ComponentItem | None = None
+        # True when the ghost overlaps an existing component; blocks placement.
+        self._ghost_overlapping: bool = False
 
         # Wire-drawing state
         self._wire_start: QPointF | None = None
@@ -449,6 +451,7 @@ class CircuitScene(QGraphicsScene):
 
         if self._mode == SceneMode.PLACE_COMPONENT and self._ghost:
             self._ghost.setPos(snapped)
+            self._update_ghost_overlap()
         elif self._mode == SceneMode.DRAW_WIRE and self._wire_start:
             # 1. Direct pin snap (nearest pin within snap radius)
             pin_pos, _ = self._nearest_pin(snapped)
@@ -497,6 +500,9 @@ class CircuitScene(QGraphicsScene):
     # ------------------------------------------------------------------
 
     def _place_component(self, pos: QPointF) -> None:
+        # Issue 3: block placement when the ghost overlaps an existing component.
+        if self._ghost_overlapping:
+            return
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
         requested_library_id = self._pending_library_id
@@ -981,6 +987,10 @@ class CircuitScene(QGraphicsScene):
 
         for item in self.items(check_rect):
             if isinstance(item, ComponentItem):
+                # Issue 1: ghost is not a real obstacle; skip it so that
+                # auto-wires form immediately when a component is placed.
+                if item is self._ghost:
+                    continue
                 if endpoint_items and item in endpoint_items:
                     br = item.mapToScene(item.boundingRect()).boundingRect()
                     if is_horizontal:
@@ -1076,8 +1086,35 @@ class CircuitScene(QGraphicsScene):
 
     def _clear_ghost(self) -> None:
         if self._ghost:
+            self._ghost._placement_invalid = False
             self.removeItem(self._ghost)
             self._ghost = None
+        self._ghost_overlapping = False
+
+    def _update_ghost_overlap(self) -> None:
+        """Issue 3: check whether the ghost overlaps any placed component.
+
+        Updates ``_ghost_overlapping`` and toggles the red invalid highlight
+        on the ghost item.  Only the component body bounding rect is
+        considered (labels and pins are excluded via ``boundingRect()``).
+        """
+        if self._ghost is None:
+            return
+        ghost_rect = self._ghost.mapToScene(
+            self._ghost.boundingRect()
+        ).boundingRect()
+        overlapping = False
+        for item in self.items(ghost_rect):
+            if not isinstance(item, ComponentItem) or item is self._ghost:
+                continue
+            item_rect = item.mapToScene(item.boundingRect()).boundingRect()
+            if ghost_rect.intersects(item_rect):
+                overlapping = True
+                break
+        self._ghost_overlapping = overlapping
+        if self._ghost._placement_invalid != overlapping:
+            self._ghost._placement_invalid = overlapping
+            self._ghost.update()
 
     # ------------------------------------------------------------------
     # Undo / redo helpers

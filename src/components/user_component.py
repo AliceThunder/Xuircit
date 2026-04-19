@@ -53,7 +53,7 @@ class UserComponentItem(ComponentItem):
         library_id: str | None = None,
     ) -> None:
         self._udef = udef
-        # Compute bounding box from pin and symbol extents
+        # Compute bounding box from pin and symbol extents (used for label placement)
         all_x: list[float] = []
         all_y: list[float] = []
         for p in udef.pins:
@@ -74,6 +74,41 @@ class UserComponentItem(ComponentItem):
             w, h = 60.0, 40.0
         self._WIDTH = w
         self._HEIGHT = h
+
+        # Compute body rect from symbol lines only (not pins), using actual
+        # min/max bounds.  This is the tight enclosing rect of the drawn symbol
+        # and is used for hit-testing, wire-path clearance, and overlap detection.
+        # Labels (child items) are intentionally not considered.
+        body_x: list[float] = []
+        body_y: list[float] = []
+        for s in udef.symbol:
+            if s.kind == "line":
+                body_x += [s.x1, s.x2]
+                body_y += [s.y1, s.y2]
+            elif s.kind == "rect":
+                body_x += [s.x1, s.x1 + s.w]
+                body_y += [s.y1, s.y1 + s.h]
+            elif s.kind == "ellipse":
+                body_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
+                body_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
+            elif s.kind == "polyline":
+                for pt in s.points:
+                    if len(pt) >= 2:
+                        body_x.append(pt[0])
+                        body_y.append(pt[1])
+        if body_x and body_y:
+            _bx1, _bx2 = min(body_x), max(body_x)
+            _by1, _by2 = min(body_y), max(body_y)
+        else:
+            # Fallback: use pin extents or the label-placement dimensions
+            _pin_x = [p.x for p in udef.pins]
+            _pin_y = [p.y for p in udef.pins]
+            if _pin_x and _pin_y:
+                _bx1, _bx2 = min(_pin_x), max(_pin_x)
+                _by1, _by2 = min(_pin_y), max(_pin_y)
+            else:
+                _bx1, _by1, _bx2, _by2 = -w / 2, -h / 2, w / 2, h / 2
+        self._body_rect = QRectF(_bx1, _by1, _bx2 - _bx1, _by2 - _by1)
 
         # Bug 4 fix: use the stored label offsets from the component definition
         # instead of computed defaults. The auto-layout will NOT override these.
@@ -184,6 +219,19 @@ class UserComponentItem(ComponentItem):
     def _auto_layout_all_labels(self) -> None:
         """Alias kept for backward compatibility. Only lays out extra labels now."""
         self._layout_extra_labels()
+
+    # ------------------------------------------------------------------
+    # Issue 2: tight bounding rect based on symbol lines only
+    # ------------------------------------------------------------------
+
+    def boundingRect(self) -> QRectF:
+        """Return the minimum enclosing rect of the drawn symbol lines.
+
+        Only symbol drawing commands contribute (not pin positions or labels).
+        A 4 px padding is added on all sides to accommodate pen widths and
+        anti-aliasing without clipping any drawn pixels.
+        """
+        return self._body_rect.adjusted(-4.0, -4.0, 4.0, 4.0)
 
     def _on_rotation_changed(self) -> None:
         """Feature 8: update label positions when the component is rotated."""
