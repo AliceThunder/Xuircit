@@ -25,6 +25,7 @@ def save_project(circuit: Circuit, filepath: str) -> None:
         "label_format": _LABEL_FORMAT,
         "created": datetime.now(timezone.utc).isoformat(),
         "components": circuit.components,
+        "annotations": circuit.annotations,
         # Wires are intentionally omitted; they are auto-drawn on load.
     }
     with open(filepath, "w", encoding="utf-8") as fh:

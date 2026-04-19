@@ -1098,6 +1098,14 @@ class CircuitScene(QGraphicsScene):
                     anno_idx[aid]["x"] = dp.x()
                     anno_idx[aid]["y"] = dp.y()
                     anno_idx[aid]["points"] = [[dp.x(), dp.y()]]
+                    # Sync style fields so saves capture context-menu changes
+                    anno_idx[aid]["text"] = item.toHtml()
+                    anno_idx[aid]["is_html"] = True
+                    anno_idx[aid]["color"] = item.anno_color
+                    anno_idx[aid]["font_family"] = item.font_family
+                    anno_idx[aid]["font_size"] = item.font_size
+                    anno_idx[aid]["bold"] = item.bold
+                    anno_idx[aid]["italic"] = item.italic
                 continue
             # Feature #6: sync moved annotation positions
             if isinstance(item, AnnotationItem):
@@ -1112,6 +1120,11 @@ class CircuitScene(QGraphicsScene):
                         item.points = pts
                         item.setPos(0, 0)
                         item._rebuild_path()
+                    # Sync style fields so saves capture context-menu changes
+                    anno_idx[aid]["color"] = item.anno_color
+                    anno_idx[aid]["line_width"] = item.line_width
+                    anno_idx[aid]["line_style"] = item.line_style
+                    anno_idx[aid]["fill"] = item.fill
                 continue
             if not isinstance(item, ComponentItem):
                 continue
@@ -1308,11 +1321,14 @@ class CircuitScene(QGraphicsScene):
                 comp_color = pos_data.get("color")
                 lrc = pos_data.get("label_ref_color")
                 lvc = pos_data.get("label_val_color")
+                ref_vis = pos_data.get("ref_visible", True)
+                val_vis = pos_data.get("val_visible", True)
             else:
                 x, y = auto_positions[i]
                 rot, fh, fv = 0, False, False
                 lrp, lvp = None, None
                 comp_color = lrc = lvc = None
+                ref_vis = val_vis = True
 
             comp_id = str(uuid.uuid4())
             # Use type_name from the layout section when available so that
@@ -1351,6 +1367,8 @@ class CircuitScene(QGraphicsScene):
                 comp_dict["label_ref_color"] = lrc
             if lvc:
                 comp_dict["label_val_color"] = lvc
+            comp_dict["ref_visible"] = ref_vis
+            comp_dict["val_visible"] = val_vis
             self.circuit.add_component(comp_dict)
 
         # Issue 5: Restore virtual (non-SPICE) components from .xcit_virtual section
@@ -1369,6 +1387,8 @@ class CircuitScene(QGraphicsScene):
                 "flip_h": vcomp.get("flip_h", False),
                 "flip_v": vcomp.get("flip_v", False),
             }
+            if vcomp.get("color"):
+                comp_dict["color"] = vcomp["color"]
             self.circuit.add_component(comp_dict)
 
         # Fix 11: Restore annotations from XCIT annotation section
