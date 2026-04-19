@@ -330,6 +330,11 @@ class CircuitScene(QGraphicsScene):
         self._pending_type = comp_type
         self._pending_library_id = library_id
         self._clear_ghost()
+        if library_id is not None:
+            from ..models.library_system import LibraryManager
+            result = LibraryManager().find_entry(comp_type, library_id)
+            if result is None or result[1] != library_id:
+                return
         item = create_component_item(
             comp_type, ref="?", library_id=self._pending_library_id
         )
@@ -528,10 +533,13 @@ class CircuitScene(QGraphicsScene):
     def _place_component(self, pos: QPointF) -> None:
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
-        result = lm.find_entry(self._pending_type, self._pending_library_id)
+        requested_library_id = self._pending_library_id
+        result = lm.find_entry(self._pending_type, requested_library_id)
         if result is None:
             return
         entry, library_id = result
+        if requested_library_id is not None and library_id != requested_library_id:
+            return
 
         # Capture before-state for undo
         before = self._take_snapshot()
