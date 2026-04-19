@@ -367,6 +367,10 @@ class ComponentItem(QGraphicsItem):
         self._flip_h_active: bool = False
         self._flip_v_active: bool = False
 
+        # Placement validity flag: set True by the scene when the ghost
+        # would overlap an existing component (triggers red highlight).
+        self._placement_invalid: bool = False
+
         self._pins: dict[str, PinItem] = {}
         self._build_pins()
 
@@ -446,12 +450,14 @@ class ComponentItem(QGraphicsItem):
             sel_pen = QPen(QColor("#ff8800"), 1.5, Qt.PenStyle.DashLine)
             painter.setPen(sel_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(
-                QRectF(-self._WIDTH / 2 - 3, -self._HEIGHT / 2 - 3,
-                       self._WIDTH + 6, self._HEIGHT + 6)
-            )
+            painter.drawRect(self.boundingRect())
 
         self._draw_symbol(painter)
+
+        if self._placement_invalid:
+            painter.setPen(QPen(QColor("#ff0000"), 2))
+            painter.setBrush(QBrush(QColor(255, 0, 0, 80)))
+            painter.drawRect(self.boundingRect())
 
     # ------------------------------------------------------------------
     # Hover: show/hide pins
