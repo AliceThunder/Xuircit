@@ -192,6 +192,12 @@ def create_component_item(
                 symbol=[SymbolCmd(**s) for s in entry.symbol],
                 ref_label_offset=entry.ref_label_offset,
                 val_label_offset=entry.val_label_offset,
+                # Bug 2 fix: pass V-perspective offsets so rotated components
+                # use the correct label positions stored in the component editor.
+                ref_label_offset_v=entry.ref_label_offset_v,
+                val_label_offset_v=entry.val_label_offset_v,
+                ref_label_style=entry.ref_label_style,
+                val_label_style=entry.val_label_style,
                 labels=[LabelDef(**lb) for lb in entry.labels],
             )
             return UserComponentItem(udef, ref=ref, value=value,
@@ -384,6 +390,8 @@ class CircuitScene(QGraphicsScene):
                 self._place_component(snapped)
             elif event.button() == Qt.MouseButton.RightButton:
                 self.set_mode(SceneMode.SELECT)
+                # Issue 5: reset annotation tool on right-click
+                self.annotation_tool_reset.emit()
             return
 
         if self._mode == SceneMode.DRAW_WIRE:
@@ -391,6 +399,8 @@ class CircuitScene(QGraphicsScene):
                 self._wire_click(snapped)
             elif event.button() == Qt.MouseButton.RightButton:
                 self._cancel_wire()
+                # Issue 5: reset annotation tool on right-click
+                self.annotation_tool_reset.emit()
             return
 
         # Feature #6: annotation drawing
@@ -401,12 +411,19 @@ class CircuitScene(QGraphicsScene):
                     self._anno_finish_polyline()
                 else:
                     self._anno_cancel()
+                # Issue 5: right-click always resets annotation tool to "select"
+                self.set_annotation_tool("select")
+                self.annotation_tool_reset.emit()
                 return
             if event.button() == Qt.MouseButton.LeftButton:
                 # Task 6: snap to the denser annotation grid (half the component grid)
                 ax, ay = _snap_anno(pos.x(), pos.y())
                 self._anno_press(QPointF(ax, ay))
                 return
+
+        # Issue 5: right-click in SELECT mode resets annotation tool
+        if event.button() == Qt.MouseButton.RightButton:
+            self.annotation_tool_reset.emit()
 
         super().mousePressEvent(event)
 
@@ -1080,6 +1097,9 @@ class CircuitScene(QGraphicsScene):
                 item._val_label.pos().x(),
                 item._val_label.pos().y(),
             ]
+            # Issue 9: persist per-instance label colors so they survive save/load
+            comp["label_ref_color"] = item._ref_label.brush().color().name()
+            comp["label_val_color"] = item._val_label.brush().color().name()
             # Issue 14: persist per-label visibility flags
             comp["ref_visible"] = item._ref_visible
             comp["val_visible"] = item._val_visible
@@ -1160,6 +1180,20 @@ class CircuitScene(QGraphicsScene):
                     if label_format < 2:
                         lvp = _migrate_label_pos(lvp, rot)
                     item._val_label.setPos(QPointF(lvp[0], lvp[1]))
+                # Issue 9: restore per-instance label colors
+                from PyQt6.QtGui import QBrush as _QBrush, QColor as _QColor
+                lrc = comp.get("label_ref_color")
+                if lrc:
+                    try:
+                        item._ref_label.setBrush(_QBrush(_QColor(lrc)))
+                    except Exception:
+                        pass
+                lvc = comp.get("label_val_color")
+                if lvc:
+                    try:
+                        item._val_label.setBrush(_QBrush(_QColor(lvc)))
+                    except Exception:
+                        pass
                 self.addItem(item)
 
         # Wires are auto-generated — no need to restore from file
@@ -1235,10 +1269,15 @@ class CircuitScene(QGraphicsScene):
                 fv = pos_data.get("flip_v", False)
                 lrp = pos_data.get("label_ref_pos", None)
                 lvp = pos_data.get("label_val_pos", None)
+                # Issue 9: restore color metadata from XCIT JSON field
+                comp_color = pos_data.get("color")
+                lrc = pos_data.get("label_ref_color")
+                lvc = pos_data.get("label_val_color")
             else:
                 x, y = auto_positions[i]
                 rot, fh, fv = 0, False, False
                 lrp, lvp = None, None
+                comp_color = lrc = lvc = None
 
             comp_id = str(uuid.uuid4())
             # Use type_name from the layout section when available so that
@@ -1270,6 +1309,13 @@ class CircuitScene(QGraphicsScene):
                 comp_dict["label_ref_pos"] = lrp
             if lvp:
                 comp_dict["label_val_pos"] = lvp
+            # Issue 9: persist color info from XCIT metadata
+            if comp_color:
+                comp_dict["color"] = comp_color
+            if lrc:
+                comp_dict["label_ref_color"] = lrc
+            if lvc:
+                comp_dict["label_val_color"] = lvc
             self.circuit.add_component(comp_dict)
 
         # Issue 5: Restore virtual (non-SPICE) components from .xcit_virtual section

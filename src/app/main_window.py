@@ -302,6 +302,8 @@ class MainWindow(QMainWindow):
     def _on_component_placed(self, comp: dict) -> None:
         self._modified = True
         self._update_title()
+        # Issue 5: reset annotation tool to "select" whenever a component is placed
+        self._layers_panel.reset_annotation_tool()
 
     def _on_wire_drawn(self, wire: dict) -> None:
         self._modified = True

@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, QObject, QEvent
+from PyQt6.QtCore import QPointF, QRectF, Qt, QObject, QEvent, pyqtSignal
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QPainter, QPen, QKeySequence, QUndoCommand,
     QUndoStack, QPolygonF,
@@ -86,6 +86,9 @@ class _SymSceneSnapshot(QUndoCommand):
 class _SymbolScene(QGraphicsScene):
     """Small scene for placing symbol elements interactively."""
 
+    # Issue 4: emitted when the active tool changes so the toolbar can highlight
+    tool_changed = pyqtSignal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self.setSceneRect(QRectF(-200, -200, 400, 400))
@@ -151,6 +154,7 @@ class _SymbolScene(QGraphicsScene):
     def set_tool(self, tool: str) -> None:
         self._cancel_draw()  # Cancel any in-progress draw when switching tools
         self._tool = tool
+        self.tool_changed.emit(tool)  # Issue 4: notify toolbar of tool change
 
     def _cancel_draw(self) -> None:
         """Cancel any in-progress drawing operation."""
@@ -447,9 +451,10 @@ class _SymbolScene(QGraphicsScene):
             self._undo_stack.redo()
             return
 
-        # Feature #3: Escape cancels in-progress polyline
+        # Feature #3: Escape cancels in-progress polyline or resets to select
         if key == Qt.Key.Key_Escape:
             self._cancel_draw()
+            self.set_tool("select")  # Issue 4: reset to select and notify toolbar
             return
 
         # Issue 5: delete selected graphics
@@ -842,23 +847,15 @@ class _FloatingToolbar(QWidget):
             btn = QPushButton(icon)
             btn.setFixedSize(32, 32)
             btn.setToolTip(tip)
-            btn.setStyleSheet(
-                "QPushButton {"
-                "  background: rgba(255,255,255,200);"
-                "  border: 1px solid #aaa;"
-                "  border-radius: 4px;"
-                "  font-size: 14px;"
-                "}"
-                "QPushButton:hover { background: rgba(200,220,255,220); }"
-                "QPushButton:pressed { background: rgba(160,200,255,255); }"
-            )
             if is_action:
+                btn.setStyleSheet(self._inactive_style())
                 btn.clicked.connect(
                     lambda _checked, k=key: self._do_action(k)
                 )
             else:
+                btn.setStyleSheet(self._inactive_style())
                 btn.clicked.connect(
-                    lambda _checked, k=key: self._scene.set_tool(k)
+                    lambda _checked, k=key: self._select_tool(k)
                 )
             layout.addWidget(btn)
             self._btn_map[key] = btn
@@ -866,9 +863,53 @@ class _FloatingToolbar(QWidget):
         self.adjustSize()
         self.hide()
 
+        # Issue 4: connect to scene's tool_changed signal to keep buttons in sync
+        scene.tool_changed.connect(self._update_active_tool)
+        # Highlight the default "select" tool on startup
+        self._update_active_tool("select")
+
         # Install event filters to track enter/leave on view and its viewport
         view.installEventFilter(self)
         view.viewport().installEventFilter(self)
+
+    @staticmethod
+    def _inactive_style() -> str:
+        return (
+            "QPushButton {"
+            "  background: rgba(255,255,255,200);"
+            "  border: 1px solid #aaa;"
+            "  border-radius: 4px;"
+            "  font-size: 14px;"
+            "}"
+            "QPushButton:hover { background: rgba(200,220,255,220); }"
+            "QPushButton:pressed { background: rgba(160,200,255,255); }"
+        )
+
+    @staticmethod
+    def _active_style() -> str:
+        return (
+            "QPushButton {"
+            "  background: rgba(50,100,220,200);"
+            "  border: 2px solid #3355cc;"
+            "  border-radius: 4px;"
+            "  font-size: 14px;"
+            "  color: white;"
+            "}"
+        )
+
+    def _select_tool(self, tool: str) -> None:
+        """Select a tool and update button highlighting."""
+        self._scene.set_tool(tool)  # This emits tool_changed → _update_active_tool
+
+    def _update_active_tool(self, tool: str) -> None:
+        """Issue 4: highlight the button for the currently active tool."""
+        _action_keys = {"fill", "clear", "undo", "redo"}
+        for key, btn in self._btn_map.items():
+            if key in _action_keys:
+                continue
+            btn.setStyleSheet(
+                self._active_style() if key == tool else self._inactive_style()
+            )
 
     def _do_action(self, action: str) -> None:
         if action == "clear":
@@ -883,26 +924,9 @@ class _FloatingToolbar(QWidget):
             btn = self._btn_map.get("fill")
             if btn:
                 if self._scene._fill_mode:
-                    btn.setStyleSheet(
-                        "QPushButton {"
-                        "  background: rgba(50,50,200,200);"
-                        "  border: 1px solid #aaa;"
-                        "  border-radius: 4px;"
-                        "  font-size: 14px;"
-                        "  color: white;"
-                        "}"
-                    )
+                    btn.setStyleSheet(self._active_style())
                 else:
-                    btn.setStyleSheet(
-                        "QPushButton {"
-                        "  background: rgba(255,255,255,200);"
-                        "  border: 1px solid #aaa;"
-                        "  border-radius: 4px;"
-                        "  font-size: 14px;"
-                        "}"
-                        "QPushButton:hover { background: rgba(200,220,255,220); }"
-                        "QPushButton:pressed { background: rgba(160,200,255,255); }"
-                    )
+                    btn.setStyleSheet(self._inactive_style())
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Enter:
@@ -1331,13 +1355,29 @@ class UserComponentEditorDialog(QDialog):
         self._sync_extra_markers()
 
     def _on_perspective_changed(self, checked: bool) -> None:
-        """Feature 8: switch the canvas markers to show H or V perspective."""
+        """Feature 8: switch the canvas markers to show H or V perspective.
+        Bug 1 fix: also rotate the canvas view 90° when V perspective is active."""
         if not checked:
             return
         # Move markers to the position for the newly selected perspective
         self._sync_ref_marker_from_spins()
         self._sync_val_marker_from_spins()
         self._sync_extra_markers()
+        # Bug 1: rotate the canvas to show what the component looks like in this orientation
+        self._update_canvas_rotation()
+
+    def _update_canvas_rotation(self) -> None:
+        """Bug 1 fix: rotate the symbol editor view 90° for V perspective, 0° for H.
+
+        The current zoom level is preserved across the perspective switch by
+        re-applying ``_zoom_level`` after resetting the transform.
+        """
+        view = self._sym_view
+        zoom = view._zoom_level
+        view.resetTransform()
+        view.scale(zoom, zoom)
+        if self._is_v_perspective():
+            view.rotate(90.0)
 
     def _sync_ref_marker_from_spins(self) -> None:
         """Move the Ref marker when the spin boxes change."""

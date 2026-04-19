@@ -236,6 +236,32 @@ class LabelItem(QGraphicsSimpleTextItem):
                 return
         super().mousePressEvent(event)
 
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        """Issue 7: right-click context menu to change label color.
+
+        When multiple labels are selected the color change applies to all of them.
+        Works regardless of the label-dragging setting.
+        """
+        menu = QMenu()
+        act_color = menu.addAction("Set Color…")
+        chosen = menu.exec(event.screenPos())
+        if chosen == act_color:
+            from PyQt6.QtWidgets import QColorDialog
+            current_color = self.brush().color()
+            color = QColorDialog.getColor(current_color, None, "Set Label Color")
+            if not color.isValid():
+                return
+            # Apply to all selected LabelItems; if none are selected, apply to self
+            scene = self.scene()
+            targets: list[LabelItem] = []
+            if scene is not None:
+                targets = [it for it in scene.selectedItems()
+                           if isinstance(it, LabelItem)]
+            if not targets:
+                targets = [self]
+            for lbl in targets:
+                lbl.setBrush(QBrush(color))
+
 
 class ComponentItem(QGraphicsItem):
     """Abstract base for all schematic component graphics items."""
