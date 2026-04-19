@@ -92,6 +92,16 @@ class UserComponentItem(ComponentItem):
         super().__init__(udef.type_name, ref, value, params, comp_id,
                          library_id=library_id)
 
+        # Issue 14: extra-property visibility list (one entry per extra prop)
+        # Initialised here — before the is_virtual check — so that
+        # _refresh_labels() (called immediately below for virtual components)
+        # can safely call _refresh_extra_labels() without AttributeError.
+        self._extra_visible: list[bool] = [True] * len(udef.labels)
+
+        # Issue 12: Extra properties — initialised empty here for the same
+        # reason; populated in the loop below after the virtual-component check.
+        self._extra_labels: list[LabelItem] = []
+
         # Bug 2: hide ref/val labels for virtual (wire-connector) components
         if udef.is_virtual:
             self._show_ref_label = False
@@ -102,13 +112,9 @@ class UserComponentItem(ComponentItem):
         _apply_label_style(self._ref_label, udef.ref_label_style)
         _apply_label_style(self._val_label, udef.val_label_style)
 
-        # Issue 14: extra-property visibility list (one entry per extra prop)
-        self._extra_visible: list[bool] = [True] * len(udef.labels)
-
         # Issue 12: Extra properties (value displayed, not name)
         # Feature 6: positions come from LabelDef.dx/dy if use_offset=True,
         #             otherwise side-based auto-layout is used.
-        self._extra_labels: list[LabelItem] = []
         for ldef in udef.labels:
             # Display the instance value from params; fall back to default_value
             display_text = self.params.get(ldef.text, ldef.default_value)

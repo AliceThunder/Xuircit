@@ -11,7 +11,9 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-_LIBRARIES_DIR = Path.home() / ".xuircit" / "libraries"
+# Libraries are stored in a "libraries/" folder at the repository/application
+# root (two levels above this file's "src/models/" directory).
+_LIBRARIES_DIR = Path(__file__).parent.parent.parent / "libraries"
 LIBRARY_SCHEMA_VERSION = 2
 
 
