@@ -111,24 +111,6 @@ def _fix_node_value_split(
     return comp
 
 
-def _sanitize_points(raw: object) -> list:
-    """Return a list of valid [x, y] numeric pairs from *raw*.
-
-    Non-list values, entries that are not sequences of length ≥ 2, and
-    entries whose first two elements cannot be coerced to float are silently
-    dropped so that malformed symbol data cannot crash component creation.
-    """
-    if not isinstance(raw, list):
-        return []
-    result: list = []
-    for pt in raw:
-        try:
-            if not hasattr(pt, "__len__") or len(pt) < 2:
-                continue
-            result.append([float(pt[0]), float(pt[1])])
-        except Exception:
-            continue
-    return result
 
 
 def create_component_item(
@@ -519,11 +501,13 @@ class CircuitScene(QGraphicsScene):
         lm = LibraryManager()
         requested_library_id = self._pending_library_id
         result = lm.find_entry(self._pending_type, requested_library_id)
+        # Fallback: if strict library_id lookup fails (library deleted/renamed),
+        # search all libraries by type_name so placement still works.
+        if result is None and requested_library_id:
+            result = lm.find_entry(self._pending_type, None)
         if result is None:
             return
         entry, library_id = result
-        if requested_library_id is not None and library_id != requested_library_id:
-            return
 
         # Capture before-state for undo
         before = self._take_snapshot()
