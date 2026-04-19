@@ -515,6 +515,9 @@ class ComponentItem(QGraphicsItem):
                 new_x = snap(self._drag_orig_pos.x() + delta.x())
                 new_y = snap(self._drag_orig_pos.y() + delta.y())
                 self.setPos(QPointF(new_x, new_y))
+            scene = self.scene()
+            if scene is not None and hasattr(scene, "_rebuild_auto_wires"):
+                scene._rebuild_auto_wires()  # type: ignore[union-attr]
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -661,7 +664,10 @@ class ComponentItem(QGraphicsItem):
     # ------------------------------------------------------------------
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
-        _open_properties(self)
+        self.setSelected(True)
+        scene = self.scene()
+        if scene is not None and hasattr(scene, "focus_properties_for_item"):
+            scene.focus_properties_for_item(self)
         super().mouseDoubleClickEvent(event)
 
     # ------------------------------------------------------------------

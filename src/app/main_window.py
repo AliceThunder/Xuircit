@@ -438,10 +438,13 @@ class MainWindow(QMainWindow):
         self._line_width_spin.setRange(0.5, 12.0)
         self._line_width_spin.setSingleStep(0.5)
         self._line_width_spin.setValue(2.0)
+        self._line_style_combo.currentTextChanged.connect(
+            self._on_annotation_pen_default_changed
+        )
+        self._line_width_spin.valueChanged.connect(
+            self._on_annotation_pen_default_changed
+        )
         tb.addWidget(self._line_width_spin)
-        self._line_apply_btn = QPushButton("Apply")
-        self._line_apply_btn.clicked.connect(self._apply_line_style_to_selection)
-        tb.addWidget(self._line_apply_btn)
 
     # ------------------------------------------------------------------
     # Signals
@@ -453,6 +456,7 @@ class MainWindow(QMainWindow):
         self._scene.component_placed.connect(self._on_component_placed)
         self._scene.wire_drawn.connect(self._on_wire_drawn)
         self._scene.selection_changed_signal.connect(self._on_selection_changed)
+        self._scene.properties_focus_requested.connect(self._focus_properties_panel)
         self._scene.mode_changed.connect(self._on_mode_changed)
         self._view.zoom_changed.connect(self._on_zoom_changed)
         # Feature #6: layer panel
@@ -472,9 +476,9 @@ class MainWindow(QMainWindow):
         self._scene.set_mode(SceneMode.SELECT)
         self._on_annotation_tool_selected("select")
 
-    def _on_place_requested(self, comp_type: str) -> None:
+    def _on_place_requested(self, comp_type: str, library_id: str) -> None:
         self._scene.set_mode(SceneMode.PLACE_COMPONENT)
-        self._scene.set_pending_component(comp_type)
+        self._scene.set_pending_component(comp_type, library_id)
         self._status_mode.setText(f"Mode: PLACE {comp_type}")
         # Bug 2 fix: grab keyboard focus so R/F/V shortcuts reach the scene
         self._view.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -489,9 +493,15 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _on_selection_changed(self, items: list) -> None:
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
         comp_items = [i for i in items if isinstance(i, ComponentItem)]
-        if len(comp_items) == 1:
+        anno_items = [
+            i for i in items if isinstance(i, (AnnotationItem, TextAnnotationItem))
+        ]
+        if len(comp_items) == 1 and not anno_items:
             self._properties.show_component(comp_items[0])
+        elif len(anno_items) == 1 and not comp_items:
+            self._properties.show_annotation(anno_items[0])
         else:
             self._properties.clear()
 
@@ -529,11 +539,14 @@ class MainWindow(QMainWindow):
         from ..components.base import LabelItem
         LabelItem.set_dragging_enabled(enabled)
 
-    def _apply_line_style_to_selection(self) -> None:
+    def _on_annotation_pen_default_changed(self) -> None:
         style = self._line_style_combo.currentText()
         width = float(self._line_width_spin.value())
-        self._scene.apply_line_style_to_selection(style, width)
         self._scene.set_annotation_pen(style, width)
+
+    def _focus_properties_panel(self, _item: object) -> None:
+        self._properties.show()
+        self._properties.raise_()
 
     # ------------------------------------------------------------------
     # File operations

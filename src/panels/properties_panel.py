@@ -5,8 +5,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QColorDialog,
     QDockWidget,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QLabel,
@@ -61,8 +63,11 @@ class PropertiesPanel(QDockWidget):
 
         self._form_widget = QWidget()
         self._build_form_widget()
+        self._build_annotation_form_widget()
         self._scroll_layout.addWidget(self._form_widget)
+        self._scroll_layout.addWidget(self._anno_form_widget)
         self._form_widget.setVisible(False)
+        self._anno_form_widget.setVisible(False)
         self._scroll_layout.addStretch()
 
         self.setWidget(outer)
@@ -113,12 +118,48 @@ class PropertiesPanel(QDockWidget):
         self._apply_btn.clicked.connect(self._apply)
         layout.addWidget(self._apply_btn)
 
+    def _build_annotation_form_widget(self) -> None:
+        layout = QVBoxLayout()
+        self._anno_form_widget = QWidget()
+        self._anno_form_widget.setLayout(layout)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        basic_box = QGroupBox("Annotation")
+        basic_form = QFormLayout(basic_box)
+        self._anno_kind = QLabel("-")
+        basic_form.addRow("Kind:", self._anno_kind)
+        layout.addWidget(basic_box)
+
+        appearance_box = QGroupBox("Appearance")
+        ap_form = QFormLayout(appearance_box)
+        self._anno_color_btn = QPushButton()
+        self._anno_color_btn.setFixedWidth(60)
+        self._anno_color_btn.clicked.connect(self._pick_anno_color)
+        ap_form.addRow("Color:", self._anno_color_btn)
+        self._anno_line_style = QComboBox()
+        self._anno_line_style.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        ap_form.addRow("Line Style:", self._anno_line_style)
+        self._anno_line_width = QDoubleSpinBox()
+        self._anno_line_width.setRange(0.5, 12.0)
+        self._anno_line_width.setSingleStep(0.5)
+        ap_form.addRow("Line Width:", self._anno_line_width)
+        self._anno_fill_cb = QCheckBox("Fill")
+        ap_form.addRow("", self._anno_fill_cb)
+        layout.addWidget(appearance_box)
+
+        self._anno_apply_btn = QPushButton("Apply")
+        self._anno_apply_btn.clicked.connect(self._apply_annotation)
+        layout.addWidget(self._anno_apply_btn)
+
     def show_component(self, item: object) -> None:
         from ..components.base import ComponentItem
         if not isinstance(item, ComponentItem):
             self.clear()
             return
         self._current_item = item
+        self._anno_form_widget.setVisible(False)
         self._ref_edit.setText(item.ref)
         self._val_edit.setText(item.value)
 
@@ -178,6 +219,30 @@ class PropertiesPanel(QDockWidget):
             self._ref_edit.setToolTip("")
             self._val_edit.setToolTip("")
 
+    def show_annotation(self, item: object) -> None:
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
+        if not isinstance(item, (AnnotationItem, TextAnnotationItem)):
+            self.clear()
+            return
+        self._current_item = item
+        self._placeholder.setVisible(False)
+        self._form_widget.setVisible(False)
+        self._anno_form_widget.setVisible(True)
+        self._anno_kind.setText(getattr(item, "kind", "unknown"))
+
+        color = getattr(item, "anno_color", "#cc2222")
+        self._anno_color_btn.setStyleSheet(
+            f"background-color: {color}; border: 1px solid #888;"
+        )
+        is_shape = isinstance(item, AnnotationItem)
+        self._anno_line_style.setEnabled(is_shape)
+        self._anno_line_width.setEnabled(is_shape)
+        self._anno_fill_cb.setEnabled(is_shape)
+        if is_shape:
+            self._anno_line_style.setCurrentText(item.line_style)
+            self._anno_line_width.setValue(float(item.line_width))
+            self._anno_fill_cb.setChecked(bool(item.fill))
+
     def _pick_color(self) -> None:
         """Feature #7: open color dialog and apply to component."""
         from ..components.base import ComponentItem
@@ -197,6 +262,7 @@ class PropertiesPanel(QDockWidget):
         self._current_item = None
         self._placeholder.setVisible(True)
         self._form_widget.setVisible(False)
+        self._anno_form_widget.setVisible(False)
 
     def _apply(self) -> None:
         from ..components.base import ComponentItem
@@ -242,3 +308,38 @@ class PropertiesPanel(QDockWidget):
             after = scene._take_snapshot()
             scene._push_undo("Edit Properties", before, after)
 
+    def _pick_anno_color(self) -> None:
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
+        if not isinstance(self._current_item, (AnnotationItem, TextAnnotationItem)):
+            return
+        item = self._current_item
+        color = QColorDialog.getColor(QColor(item.anno_color), self, "Set Color")
+        if color.isValid():
+            item.anno_color = color.name()
+            if isinstance(item, AnnotationItem):
+                item._rebuild_path()
+            else:
+                item.setDefaultTextColor(color)
+            self._anno_color_btn.setStyleSheet(
+                f"background-color: {color.name()}; border: 1px solid #888;"
+            )
+
+    def _apply_annotation(self) -> None:
+        from ..canvas.annotation import AnnotationItem, TextAnnotationItem
+        if not isinstance(self._current_item, (AnnotationItem, TextAnnotationItem)):
+            return
+        item = self._current_item
+        scene = item.scene() if callable(getattr(item, "scene", None)) else None
+        before = None
+        if scene is not None and hasattr(scene, "_take_snapshot") and \
+                hasattr(scene, "undo_stack") and scene.undo_stack is not None:
+            before = scene._take_snapshot()
+        if isinstance(item, AnnotationItem):
+            item.line_style = self._anno_line_style.currentText()
+            item.line_width = float(self._anno_line_width.value())
+            item.fill = self._anno_fill_cb.isChecked()
+            item._rebuild_path()
+        if before is not None and scene is not None and \
+                hasattr(scene, "_push_undo") and hasattr(scene, "_take_snapshot"):
+            after = scene._take_snapshot()
+            scene._push_undo("Edit Annotation Properties", before, after)

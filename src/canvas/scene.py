@@ -8,7 +8,7 @@ from enum import Enum, auto
 from typing import Any
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QPainter, QUndoCommand, QUndoStack
+from PyQt6.QtGui import QBrush, QColor, QPainter, QTransform, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEvent
 
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
@@ -250,12 +250,14 @@ class CircuitScene(QGraphicsScene):
     mode_changed = pyqtSignal(str)
     # Fix 9: emitted when ESC resets the annotation tool to "select"
     annotation_tool_reset = pyqtSignal()
+    properties_focus_requested = pyqtSignal(object)
 
     def __init__(self, circuit: Circuit, parent: Any = None) -> None:
         super().__init__(parent)
         self.circuit = circuit
         self._mode = SceneMode.SELECT
         self._pending_type: str = ""
+        self._pending_library_id: str | None = None
         self._ghost: ComponentItem | None = None
 
         # Wire-drawing state
@@ -322,10 +324,11 @@ class CircuitScene(QGraphicsScene):
     def mode(self) -> SceneMode:
         return self._mode
 
-    def set_pending_component(self, comp_type: str) -> None:
+    def set_pending_component(self, comp_type: str, library_id: str | None = None) -> None:
         self._pending_type = comp_type
+        self._pending_library_id = library_id
         self._clear_ghost()
-        item = create_component_item(comp_type, ref="?")
+        item = create_component_item(comp_type, ref="?", library_id=library_id)
         if item:
             item.setOpacity(0.5)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -449,6 +452,14 @@ class CircuitScene(QGraphicsScene):
 
         # Issue 5: right-click in SELECT mode resets annotation tool
         if event.button() == Qt.MouseButton.RightButton:
+            it = self.itemAt(pos, self.views()[0].transform() if self.views() else QTransform())
+            if (
+                it is not None
+                and bool(it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                and not it.isSelected()
+            ):
+                self.clearSelection()
+                it.setSelected(True)
             self.annotation_tool_reset.emit()
 
         super().mousePressEvent(event)
@@ -513,7 +524,7 @@ class CircuitScene(QGraphicsScene):
     def _place_component(self, pos: QPointF) -> None:
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
-        result = lm.find_entry(self._pending_type)
+        result = lm.find_entry(self._pending_type, self._pending_library_id)
         if result is None:
             return
         entry, library_id = result
@@ -923,8 +934,9 @@ class CircuitScene(QGraphicsScene):
             return
         seen.add(flat)
 
-        # Bug 3: exclude the two endpoint components themselves from path check
-        if not self._is_path_clear(sp_a, sp_b, exclude={item_a, item_b}):
+        # Keep obstacle detection strict so wires do not pass through component
+        # bodies to reach pins on the far side.
+        if not self._is_path_clear(sp_a, sp_b):
             return
 
         self._add_auto_wire(
@@ -1068,6 +1080,12 @@ class CircuitScene(QGraphicsScene):
 
     def _on_selection_changed(self) -> None:
         self.selection_changed_signal.emit(self.selectedItems())
+
+    def focus_properties_for_item(self, item: QGraphicsItem) -> None:
+        if not item.isSelected():
+            self.clearSelection()
+            item.setSelected(True)
+        self.properties_focus_requested.emit(item)
 
     # ------------------------------------------------------------------
     # Rebuild / apply
