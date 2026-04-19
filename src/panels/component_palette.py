@@ -23,7 +23,7 @@ class ComponentPalette(QDockWidget):
     Components are grouped first by library, then by category within each library.
     """
 
-    place_requested = pyqtSignal(str)  # emits comp_type
+    place_requested = pyqtSignal(str, str)  # emits (comp_type, library_id)
     library_changed = pyqtSignal()     # Task 5: emitted after library edits
 
     def __init__(self, parent: object = None) -> None:
@@ -99,6 +99,9 @@ class ComponentPalette(QDockWidget):
                 for e in entries:
                     child = QTreeWidgetItem([e.display_name])
                     child.setData(0, Qt.ItemDataRole.UserRole, e.type_name)
+                    child.setData(
+                        0, Qt.ItemDataRole.UserRole + 1, lib.library_id
+                    )
                     child.setToolTip(0, e.description)
                     cat_item.addChild(child)
                 cat_item.setExpanded(True)
@@ -121,8 +124,9 @@ class ComponentPalette(QDockWidget):
     def _on_item_clicked(self, item: QTreeWidgetItem, col: int) -> None:
         """Issue 1: single-click on a component emits place_requested."""
         comp_type = item.data(0, Qt.ItemDataRole.UserRole)
-        if comp_type:
-            self.place_requested.emit(comp_type)
+        library_id = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if comp_type and library_id:
+            self.place_requested.emit(comp_type, library_id)
 
     def _on_manage(self) -> None:
         from ..dialogs.user_component_editor import LibraryManagerDialog
@@ -133,4 +137,3 @@ class ComponentPalette(QDockWidget):
         self._populate(self._search.text())
         # Task 5: notify main window to rebuild the canvas with updated definitions
         self.library_changed.emit()
-
