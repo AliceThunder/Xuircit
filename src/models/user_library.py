@@ -23,7 +23,7 @@ class PinDef:
 @dataclass
 class SymbolCmd:
     """One drawing command for the symbol."""
-    kind: str           # "line" | "rect" | "ellipse" | "text" | "polyline"
+    kind: str           # "line" | "rect" | "ellipse" | "arc" | "text" | "polyline"
     # Common fields (not all required for every kind)
     x1: float = 0.0
     y1: float = 0.0
@@ -37,6 +37,9 @@ class SymbolCmd:
     filled: bool = False  # Issue 6: solid fill for rect/ellipse/polyline
     # Polyline: list of [x, y] pairs (used when kind == "polyline")
     points: list = field(default_factory=list)
+    # Arc: start angle and span angle in degrees (CCW from 3-o'clock)
+    start_angle: float = 0.0
+    span_angle: float = 180.0
 
 
 @dataclass
@@ -138,6 +141,8 @@ class UserCompDef:
                     line_width=s.get("line_width", 2.0),
                     filled=s.get("filled", False),
                     points=s.get("points", []),
+                    start_angle=s.get("start_angle", 0.0),
+                    span_angle=s.get("span_angle", 180.0),
                 ))
             except Exception:
                 pass

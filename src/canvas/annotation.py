@@ -43,6 +43,7 @@ class AnnotationItem(QGraphicsPathItem):
     - "arrow":    a line with an arrowhead at p2
     - "circle":   a circle centred at p1 with radius = dist(p1, p2)
     - "ellipse":  an ellipse inscribed in the bounding box of p1–p2
+    - "arc":      an arc inscribed in the bounding box of p1–p2
     - "rect":     a rectangle from p1 to p2
     - "polyline": an open/closed polyline of multiple points
     """
@@ -57,6 +58,8 @@ class AnnotationItem(QGraphicsPathItem):
         line_style: str = "solid",
         fill: bool = False,
         anno_id: str | None = None,
+        start_angle: float = 0.0,
+        span_angle: float = 180.0,
     ) -> None:
         super().__init__()
         self.anno_id = anno_id or str(uuid.uuid4())
@@ -67,6 +70,8 @@ class AnnotationItem(QGraphicsPathItem):
         self.line_width = line_width
         self.line_style = line_style
         self.fill = fill
+        self.start_angle = start_angle
+        self.span_angle = span_angle
         self.setZValue(ANNOTATION_Z)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -121,6 +126,15 @@ class AnnotationItem(QGraphicsPathItem):
                     path.addEllipse(QRectF(rx, ry, w, h))
                 else:
                     path.addRect(QRectF(rx, ry, w, h))
+        elif self.kind == "arc":
+            if len(pts) >= 2:
+                x1, y1 = pts[0]
+                x2, y2 = pts[1]
+                rx, ry = min(x1, x2), min(y1, y2)
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                arc_rect = QRectF(rx, ry, w, h)
+                path.arcMoveTo(arc_rect, self.start_angle)
+                path.arcTo(arc_rect, self.start_angle, self.span_angle)
         else:
             # Fallback: treat as polyline
             path.moveTo(pts[0][0], pts[0][1])
@@ -128,6 +142,20 @@ class AnnotationItem(QGraphicsPathItem):
                 path.lineTo(pt[0], pt[1])
 
         self.setPath(path)
+
+    # ------------------------------------------------------------------
+    # Bug 4: allow dragging from anywhere within the bounding box when selected
+    # ------------------------------------------------------------------
+
+    def shape(self) -> QPainterPath:
+        """Return the full bounding rect as the shape when selected so that
+        the item can be dragged by clicking anywhere inside the selection box,
+        not just precisely on the path lines."""
+        if self.isSelected():
+            s = QPainterPath()
+            s.addRect(self.boundingRect())
+            return s
+        return super().shape()
 
     def _build_arrow_path(self, path: QPainterPath) -> None:
         """Build an arrow from first to last point with arrowhead at last."""
@@ -253,6 +281,8 @@ class AnnotationItem(QGraphicsPathItem):
             "line_width": self.line_width,
             "line_style": self.line_style,
             "fill": self.fill,
+            "start_angle": self.start_angle,
+            "span_angle": self.span_angle,
         }
 
     @classmethod
@@ -269,6 +299,8 @@ class AnnotationItem(QGraphicsPathItem):
             line_style=data.get("line_style", "solid"),
             fill=data.get("fill", False),
             anno_id=data.get("id"),
+            start_angle=data.get("start_angle", 0.0),
+            span_angle=data.get("span_angle", 180.0),
         )
 
 

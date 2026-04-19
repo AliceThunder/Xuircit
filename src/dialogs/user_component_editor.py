@@ -55,6 +55,57 @@ def _snap_sub(x: float, y: float) -> tuple[float, float]:
     return round(x / SUB_GRID) * SUB_GRID, round(y / SUB_GRID) * SUB_GRID
 
 
+# ---------------------------------------------------------------------------
+# Bug 3: Sub-grid snapping mixin for symbol drawing items
+# ---------------------------------------------------------------------------
+
+class _SymItemMixin:
+    """Mixin that snaps ItemPositionChange to SUB_GRID for symbol graphics."""
+
+    def itemChange(
+        self, change: "QGraphicsItem.GraphicsItemChange", value: object
+    ) -> object:
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            v = value  # type: ignore[assignment]
+            return QPointF(
+                round(v.x() / SUB_GRID) * SUB_GRID,  # type: ignore[union-attr]
+                round(v.y() / SUB_GRID) * SUB_GRID,  # type: ignore[union-attr]
+            )
+        return super().itemChange(change, value)  # type: ignore[misc]
+
+
+class _SnapLineItem(_SymItemMixin, QGraphicsLineItem):
+    """QGraphicsLineItem that snaps to SUB_GRID when dragged."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+
+class _SnapRectItem(_SymItemMixin, QGraphicsRectItem):
+    """QGraphicsRectItem that snaps to SUB_GRID when dragged."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+
+class _SnapEllipseItem(_SymItemMixin, QGraphicsEllipseItem):
+    """QGraphicsEllipseItem that snaps to SUB_GRID when dragged."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+
+class _SnapPathItem(_SymItemMixin, QGraphicsPathItem):
+    """QGraphicsPathItem that snaps to SUB_GRID when dragged."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+
 def _build_pins_defensive(raw_pins: list) -> list[PinDef]:
     """Build a list of PinDef from *raw_pins*, skipping blank or duplicate names.
 
@@ -119,7 +170,7 @@ class _SymbolScene(QGraphicsScene):
         super().__init__()
         self.setSceneRect(QRectF(-200, -200, 400, 400))
         self.setBackgroundBrush(QColor("#f8f8f8"))
-        # tools: "select" | "line" | "rect" | "ellipse" | "pin" | "polyline"
+        # tools: "select" | "line" | "rect" | "ellipse" | "arc" | "pin" | "polyline"
         self._tool: str = "select"
         self._fill_mode: bool = False  # Issue 6: solid fill toggle
         self._line_start: QPointF | None = None
@@ -261,39 +312,7 @@ class _SymbolScene(QGraphicsScene):
 
         for cmd in snap.get("cmds", []):
             self.sym_cmds.append(cmd)
-            pen = self._pen_for_cmd(cmd)
-            if cmd.kind == "line":
-                it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
-            elif cmd.kind == "rect":
-                brush = (QBrush(QColor("#333333")) if cmd.filled
-                         else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h), pen, brush)
-            elif cmd.kind == "ellipse":
-                rx, ry = cmd.w / 2, cmd.h / 2
-                brush = (QBrush(QColor("#333333")) if cmd.filled
-                         else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addEllipse(
-                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h), pen, brush)
-            elif cmd.kind == "polyline":
-                # Feature #3: render polyline in the symbol editor
-                from PyQt6.QtGui import QPainterPath
-                pts = cmd.points
-                if len(pts) >= 2:
-                    path = QPainterPath()
-                    path.moveTo(pts[0][0], pts[0][1])
-                    for px, py in pts[1:]:
-                        path.lineTo(px, py)
-                    if cmd.filled and len(pts) >= 3:
-                        path.closeSubpath()
-                    it = QGraphicsPathItem(path)
-                    it.setPen(pen)
-                    if cmd.filled and len(pts) >= 3:
-                        it.setBrush(QBrush(QColor("#333333")))
-                    self.addItem(it)
-                else:
-                    it = self.addLine(0, 0, 0, 0, pen)
-            else:
-                it = self.addLine(0, 0, 0, 0, pen)
+            it = self._build_sym_item(cmd)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
             self._sym_items.append(it)
@@ -306,6 +325,63 @@ class _SymbolScene(QGraphicsScene):
     def _push_undo(self, text: str, before: dict, after: dict) -> None:
         cmd = _SymSceneSnapshot(self, before, after, text)
         self._undo_stack.push(cmd)
+
+    def _build_sym_item(self, cmd: SymbolCmd) -> QGraphicsItem:
+        """Bug 3: Build a snap-aware QGraphicsItem for a SymbolCmd.
+
+        All returned items snap to SUB_GRID when dragged via _SymItemMixin.
+        The caller is responsible for setting ItemIsSelectable / ItemIsMovable
+        flags and adding the item to the scene.
+        """
+        from PyQt6.QtGui import QPainterPath as _PP
+        from PyQt6.QtCore import QLineF as _LF
+        pen = self._pen_for_cmd(cmd)
+        if cmd.kind == "line":
+            it: QGraphicsItem = _SnapLineItem(
+                _LF(cmd.x1, cmd.y1, cmd.x2, cmd.y2))
+            it.setPen(pen)  # type: ignore[union-attr]
+        elif cmd.kind == "rect":
+            brush = (QBrush(QColor("#333333")) if cmd.filled
+                     else QBrush(Qt.BrushStyle.NoBrush))
+            it = _SnapRectItem(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h))
+            it.setPen(pen)  # type: ignore[union-attr]
+            it.setBrush(brush)  # type: ignore[union-attr]
+        elif cmd.kind == "ellipse":
+            rx, ry = cmd.w / 2, cmd.h / 2
+            brush = (QBrush(QColor("#333333")) if cmd.filled
+                     else QBrush(Qt.BrushStyle.NoBrush))
+            it = _SnapEllipseItem(QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h))
+            it.setPen(pen)  # type: ignore[union-attr]
+            it.setBrush(brush)  # type: ignore[union-attr]
+        elif cmd.kind == "arc":
+            rx, ry = cmd.w / 2, cmd.h / 2
+            arc_rect = QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h)
+            path = _PP()
+            path.arcMoveTo(arc_rect, cmd.start_angle)
+            path.arcTo(arc_rect, cmd.start_angle, cmd.span_angle)
+            it = _SnapPathItem(path)
+            it.setPen(pen)  # type: ignore[union-attr]
+        elif cmd.kind == "polyline":
+            pts = cmd.points
+            if len(pts) >= 2:
+                path = _PP()
+                path.moveTo(pts[0][0], pts[0][1])
+                for ppx, ppy in pts[1:]:
+                    path.lineTo(ppx, ppy)
+                if cmd.filled and len(pts) >= 3:
+                    path.closeSubpath()
+                it = _SnapPathItem(path)
+                it.setPen(pen)  # type: ignore[union-attr]
+                if cmd.filled and len(pts) >= 3:
+                    it.setBrush(QBrush(QColor("#333333")))  # type: ignore[union-attr]
+            else:
+                it = _SnapLineItem(_LF(0, 0, 0, 0))
+                it.setPen(pen)  # type: ignore[union-attr]
+        else:
+            it = _SnapLineItem(_LF(0, 0, 0, 0))
+            it.setPen(pen)  # type: ignore[union-attr]
+        self.addItem(it)
+        return it
 
     # ------------------------------------------------------------------
     # Mouse events
@@ -359,10 +435,14 @@ class _SymbolScene(QGraphicsScene):
                                 line_width=self._line_width)
                 self.sym_cmds.append(cmd)
                 pen = self._draw_pen()
-                it = self.addLine(self._line_start.x(), self._line_start.y(),
-                                  draw_pos.x(), draw_pos.y(), pen)
+                from PyQt6.QtCore import QLineF
+                it = _SnapLineItem(QLineF(
+                    self._line_start.x(), self._line_start.y(),
+                    draw_pos.x(), draw_pos.y()))
+                it.setPen(pen)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.addItem(it)
                 self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
@@ -386,9 +466,12 @@ class _SymbolScene(QGraphicsScene):
                 pen = self._draw_pen()
                 brush = (QBrush(QColor("#333333")) if self._fill_mode
                          else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addRect(QRectF(rx, ry, w, h), pen, brush)
+                it = _SnapRectItem(QRectF(rx, ry, w, h))
+                it.setPen(pen)
+                it.setBrush(brush)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.addItem(it)
                 self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
@@ -412,22 +495,62 @@ class _SymbolScene(QGraphicsScene):
                 pen = self._draw_pen()
                 brush = (QBrush(QColor("#333333")) if self._fill_mode
                          else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addEllipse(QRectF(rx, ry, w, h), pen, brush)
+                it = _SnapEllipseItem(QRectF(rx, ry, w, h))
+                it.setPen(pen)
+                it.setBrush(brush)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.addItem(it)
                 self._sym_items.append(it)
                 if self._temp_item:
                     self.removeItem(self._temp_item)
                     self._temp_item = None
                 self._line_start = None
                 self._push_undo("Draw Ellipse", before, self._snapshot())
+        elif self._tool == "arc":
+            if self._line_start is None:
+                self._line_start = draw_pos
+            else:
+                before = self._snapshot()
+                x1, y1 = self._line_start.x(), self._line_start.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                rx, ry = min(x1, x2), min(y1, y2)
+                cmd = SymbolCmd("arc", x1=rx + w / 2, y1=ry + h / 2,
+                                w=w, h=h,
+                                start_angle=0.0, span_angle=180.0,
+                                line_style=self._line_style_name,
+                                line_width=self._line_width)
+                self.sym_cmds.append(cmd)
+                it = self._make_arc_item(QRectF(rx, ry, w, h),
+                                         cmd.start_angle, cmd.span_angle)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.addItem(it)
+                self._sym_items.append(it)
+                if self._temp_item:
+                    self.removeItem(self._temp_item)
+                    self._temp_item = None
+                self._line_start = None
+                self._push_undo("Draw Arc", before, self._snapshot())
         else:
             super().mousePressEvent(event)
 
+    def _make_arc_item(self, rect: QRectF, start_angle: float,
+                       span_angle: float) -> "_SnapPathItem":
+        """Build a _SnapPathItem that renders an arc within *rect*."""
+        from PyQt6.QtGui import QPainterPath as _PP
+        path = _PP()
+        path.arcMoveTo(rect, start_angle)
+        path.arcTo(rect, start_angle, span_angle)
+        it = _SnapPathItem(path)
+        it.setPen(self._draw_pen())
+        return it
+
     def mouseMoveEvent(self, event: Any) -> None:
         pos = event.scenePos()
-        # Preview for line/rect/ellipse
-        if self._line_start is not None and self._tool in ("line", "rect", "ellipse"):
+        # Preview for line/rect/ellipse/arc
+        if self._line_start is not None and self._tool in ("line", "rect", "ellipse", "arc"):
             # Issue 7: preview end-point also snaps to sub-grid
             dsx, dsy = _snap_sub(pos.x(), pos.y())
             draw_pos = QPointF(dsx, dsy)
@@ -445,13 +568,27 @@ class _SymbolScene(QGraphicsScene):
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addRect(
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
-            else:  # ellipse
+            elif self._tool == "ellipse":
                 x1, y1 = self._line_start.x(), self._line_start.y()
                 x2, y2 = draw_pos.x(), draw_pos.y()
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 self._temp_item = self.addEllipse(
                     QRectF(rx, ry, w, h), pen, QBrush(Qt.BrushStyle.NoBrush))
+            else:  # arc
+                x1, y1 = self._line_start.x(), self._line_start.y()
+                x2, y2 = draw_pos.x(), draw_pos.y()
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                rx, ry = min(x1, x2), min(y1, y2)
+                from PyQt6.QtGui import QPainterPath as _PP
+                arc_path = _PP()
+                arc_rect = QRectF(rx, ry, w, h)
+                arc_path.arcMoveTo(arc_rect, 0.0)
+                arc_path.arcTo(arc_rect, 0.0, 180.0)
+                tmp = QGraphicsPathItem(arc_path)
+                tmp.setPen(pen)
+                self.addItem(tmp)
+                self._temp_item = tmp
         # Feature #3: preview for polyline
         elif self._tool == "polyline" and self._poly_points:
             dsx, dsy = _snap_sub(pos.x(), pos.y())
@@ -487,7 +624,7 @@ class _SymbolScene(QGraphicsScene):
         )
         self.sym_cmds.append(cmd)
 
-        # Build a QGraphicsPathItem for the symbol editor display
+        # Build a _SnapPathItem for the symbol editor display (Bug 3: snaps to sub-grid)
         from PyQt6.QtGui import QPainterPath
         path = QPainterPath()
         path.moveTo(pts[0][0], pts[0][1])
@@ -496,7 +633,7 @@ class _SymbolScene(QGraphicsScene):
         if self._fill_mode and len(pts) >= 3:
             path.closeSubpath()
         pen = self._draw_pen()
-        it = QGraphicsPathItem(path)
+        it = _SnapPathItem(path)
         it.setPen(pen)
         if self._fill_mode and len(pts) >= 3:
             it.setBrush(QBrush(QColor("#333333")))
@@ -579,21 +716,7 @@ class _SymbolScene(QGraphicsScene):
                         c.x2 += SUB_GRID
                         c.y2 += SUB_GRID
                     self.sym_cmds.append(c)
-                    if c.kind == "line":
-                        pen = self._pen_for_cmd(c)
-                        it = self.addLine(c.x1, c.y1, c.x2, c.y2, pen)
-                    elif c.kind == "rect":
-                        pen = self._pen_for_cmd(c)
-                        it = self.addRect(QRectF(c.x1, c.y1, c.w, c.h), pen,
-                                          QBrush(Qt.BrushStyle.NoBrush))
-                    elif c.kind == "ellipse":
-                        pen = self._pen_for_cmd(c)
-                        rx2, ry2 = c.w / 2, c.h / 2
-                        it = self.addEllipse(
-                            QRectF(c.x1 - rx2, c.y1 - ry2, c.w, c.h), pen,
-                            QBrush(Qt.BrushStyle.NoBrush))
-                    else:
-                        it = self.addLine(0, 0, 0, 0, pen)
+                    it = self._build_sym_item(c)
                     it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                     it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                     self._sym_items.append(it)
@@ -718,8 +841,20 @@ class _SymbolScene(QGraphicsScene):
         self._extra_markers.clear()
 
     def clear_symbol(self) -> None:
+        # Bug 1 fix: preserve the property-position markers (ref/val/extra) when
+        # clearing the canvas so that only the drawn shapes and pins are removed.
+        markers_to_keep: set[QGraphicsItem] = set()
+        if self._ref_marker is not None:
+            markers_to_keep.add(self._ref_marker)
+        if self._val_marker is not None:
+            markers_to_keep.add(self._val_marker)
+        for m in self._extra_markers:
+            if m is not None:
+                markers_to_keep.add(m)
+
         for item in list(self.items()):
-            self.removeItem(item)
+            if item not in markers_to_keep:
+                self.removeItem(item)
         self.pins.clear()
         self.sym_cmds.clear()
         self._sym_items.clear()
@@ -727,50 +862,13 @@ class _SymbolScene(QGraphicsScene):
         self._temp_item = None
         self._poly_points.clear()
         self._poly_segs.clear()
-        # Property markers are removed by the clear above; reset references
-        self._ref_marker = None
-        self._val_marker = None
-        self._extra_markers.clear()
+        # Property markers are preserved above; do NOT reset their references.
         self._draw_origin()
 
     def load_def(self, udef: UserCompDef) -> None:
         self.clear_symbol()
         for cmd in udef.symbol:
-            pen = self._pen_for_cmd(cmd)
-            if cmd.kind == "line":
-                it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
-            elif cmd.kind == "rect":
-                brush = (QBrush(QColor("#333333")) if cmd.filled
-                         else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addRect(QRectF(cmd.x1, cmd.y1, cmd.w, cmd.h),
-                                  pen, brush)
-            elif cmd.kind == "ellipse":
-                rx, ry = cmd.w / 2, cmd.h / 2
-                brush = (QBrush(QColor("#333333")) if cmd.filled
-                         else QBrush(Qt.BrushStyle.NoBrush))
-                it = self.addEllipse(
-                    QRectF(cmd.x1 - rx, cmd.y1 - ry, cmd.w, cmd.h),
-                    pen, brush)
-            elif cmd.kind == "polyline":
-                # Feature #3: render polyline
-                from PyQt6.QtGui import QPainterPath
-                pts = cmd.points
-                if len(pts) >= 2:
-                    path = QPainterPath()
-                    path.moveTo(pts[0][0], pts[0][1])
-                    for px, py in pts[1:]:
-                        path.lineTo(px, py)
-                    if cmd.filled and len(pts) >= 3:
-                        path.closeSubpath()
-                    it = QGraphicsPathItem(path)
-                    it.setPen(pen)
-                    if cmd.filled and len(pts) >= 3:
-                        it.setBrush(QBrush(QColor("#333333")))
-                    self.addItem(it)
-                else:
-                    it = self.addLine(0, 0, 0, 0, pen)
-            else:
-                it = self.addLine(0, 0, 0, 0, pen)
+            it = self._build_sym_item(cmd)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
             it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
             self._sym_items.append(it)
@@ -971,6 +1069,7 @@ class _FloatingToolbar(QWidget):
         ("⌇", "Draw Polyline (click=add vertex, right-click or dbl-click=finish)", "polyline", False),
         ("▭", "Draw Rect", "rect", False),
         ("◯", "Draw Ellipse", "ellipse", False),
+        ("⌒", "Draw Arc (click start, click end of bounding box)", "arc", False),
         ("⊙", "Add Pin", "pin", False),
         ("■", "Toggle Fill (solid shapes)", "fill", True),  # Issue 6
         ("✕", "Clear Canvas", "clear", True),
