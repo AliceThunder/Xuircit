@@ -372,18 +372,18 @@ class CircuitScene(QGraphicsScene):
     def apply_line_style_to_selection(self, style_name: str, width: float) -> None:
         """Apply line style/width to selected wires and annotations."""
         from ..canvas.annotation import AnnotationItem
-        changed = False
+        selected_items = [
+            item
+            for item in self.selectedItems()
+            if isinstance(item, (WireItem, AnnotationItem))
+        ]
+        if not selected_items:
+            return
         before = self._take_snapshot()
-        for item in self.selectedItems():
-            if isinstance(item, WireItem):
-                item.set_line_style(style_name, width)
-                changed = True
-            elif isinstance(item, AnnotationItem):
-                item.set_line_style(style_name, width)
-                changed = True
-        if changed:
-            after = self._take_snapshot()
-            self._push_undo("Set Line Style", before, after)
+        for item in selected_items:
+            item.set_line_style(style_name, width)
+        after = self._take_snapshot()
+        self._push_undo("Set Line Style", before, after)
 
     def _anno_cancel(self) -> None:
         """Cancel any in-progress annotation drawing."""
