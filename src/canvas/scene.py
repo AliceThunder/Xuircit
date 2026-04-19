@@ -645,7 +645,7 @@ class CircuitScene(QGraphicsScene):
             if self._anno_temp is not None:
                 self.removeItem(self._anno_temp)
                 self._anno_temp = None
-        elif tool in ("line", "arrow", "circle", "ellipse", "rect"):
+        elif tool in ("line", "arrow", "circle", "ellipse", "rect", "arc"):
             if self._anno_start is None:
                 self._anno_start = pos
             else:
@@ -698,7 +698,7 @@ class CircuitScene(QGraphicsScene):
         elif self._anno_start is not None and tool in ("line", "arrow"):
             s = self._anno_start
             self._anno_temp = self.addLine(s.x(), s.y(), pos.x(), pos.y(), pen)
-        elif self._anno_start is not None and tool in ("circle", "ellipse", "rect"):
+        elif self._anno_start is not None and tool in ("circle", "ellipse", "rect", "arc"):
             import math
             s = self._anno_start
             x1, y1 = s.x(), s.y()
@@ -708,6 +708,20 @@ class CircuitScene(QGraphicsScene):
                 from PyQt6.QtCore import QRectF as QRF_
                 self._anno_temp = self.addEllipse(
                     QRF_(x1 - r, y1 - r, 2 * r, 2 * r), pen)
+            elif tool == "arc":
+                from PyQt6.QtCore import QRectF as QRF_
+                from PyQt6.QtGui import QPainterPath as _PP
+                rx, ry = min(x1, x2), min(y1, y2)
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                arc_path = _PP()
+                arc_rect = QRF_(rx, ry, w, h)
+                arc_path.arcMoveTo(arc_rect, 0.0)
+                arc_path.arcTo(arc_rect, 0.0, 180.0)
+                from PyQt6.QtWidgets import QGraphicsPathItem as _GPI
+                tmp = _GPI(arc_path)
+                tmp.setPen(pen)
+                self.addItem(tmp)
+                self._anno_temp = tmp
             else:
                 from PyQt6.QtCore import QRectF as QRF_
                 rx, ry = min(x1, x2), min(y1, y2)
@@ -726,6 +740,10 @@ class CircuitScene(QGraphicsScene):
         pts = [[start.x(), start.y()], [end.x(), end.y()]]
         # Fix 6: capture before-state for undo
         before = self._take_snapshot()
+        # Arc uses default start=0°, span=180° (top-half of bounding ellipse)
+        extra: dict = {}
+        if tool == "arc":
+            extra = {"start_angle": 0.0, "span_angle": 180.0}
         item = AnnotationItem(
             kind=tool,
             points=pts,
@@ -734,6 +752,7 @@ class CircuitScene(QGraphicsScene):
             line_width=self._anno_line_width,
             line_style=self._anno_line_style,
             fill=self._anno_fill,
+            **extra,
         )
         if not self._annotation_layer_visible:
             item.setVisible(False)

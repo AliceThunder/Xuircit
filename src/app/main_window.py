@@ -49,6 +49,7 @@ class _CanvasAnnotationToolbar(QWidget):
         ("→", "arrow",    "Draw an arrow"),
         ("◯", "circle",   "Draw a circle"),
         ("⬭", "ellipse",  "Draw an ellipse"),
+        ("⌒", "arc",      "Draw an arc (click start, click end of bounding box)"),
         ("▭", "rect",     "Draw a rectangle"),
         ("⌇", "polyline", "Draw a polyline (right-click to finish)"),
         ("✎", "text",     "Place a text annotation"),

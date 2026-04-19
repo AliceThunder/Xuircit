@@ -367,6 +367,15 @@ class UserComponentItem(ComponentItem):
                         path.closeSubpath()
                         painter.fillPath(path, QBrush(QColor(self._color)))
                     painter.drawPath(path)
+            elif cmd.kind == "arc":
+                from PyQt6.QtGui import QPainterPath
+                cx, cy = cmd.x1, cmd.y1
+                rx, ry = cmd.w / 2, cmd.h / 2
+                arc_rect = QRectF(cx - rx, cy - ry, cmd.w, cmd.h)
+                path = QPainterPath()
+                path.arcMoveTo(arc_rect, cmd.start_angle)
+                path.arcTo(arc_rect, cmd.start_angle, cmd.span_angle)
+                painter.drawPath(path)
 def _cmd_pen(color: str, style_name: str, width: float) -> QPen:
     pen = QPen(QColor(color), width)
     pen.setStyle(_wire_qt_style(style_name))
