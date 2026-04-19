@@ -5,7 +5,9 @@ from PyQt6.QtCore import Qt, QSize, QEvent, QObject
 from PyQt6.QtGui import QAction, QKeySequence, QUndoStack
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
     QLabel,
     QMainWindow,
@@ -182,9 +184,7 @@ class _CanvasAnnotationToolbar(QWidget):
 
     def _reposition(self) -> None:
         self.move(8, 8)
-
-
-
+class MainWindow(QMainWindow):
     """Main application window for Xuircit."""
 
     def __init__(self) -> None:
@@ -236,6 +236,16 @@ class _CanvasAnnotationToolbar(QWidget):
         self._build_menu()
         self._build_toolbar()
         self._connect_signals()
+        try:
+            from ..app.settings import AppSettings
+            s = AppSettings()
+            self._line_style_combo.setCurrentText(s.annotation_line_style())
+            self._line_width_spin.setValue(s.annotation_line_width())
+            self._scene.set_annotation_pen(
+                s.annotation_line_style(), s.annotation_line_width()
+            )
+        except Exception:
+            pass
 
         # Feature #2: apply saved font settings to labels
         self._apply_font_settings()
@@ -417,6 +427,21 @@ class _CanvasAnnotationToolbar(QWidget):
         )
         self._lbl_drag_cb.toggled.connect(self._on_label_drag_toggled)
         tb.addWidget(self._lbl_drag_cb)
+        tb.addSeparator()
+        tb.addWidget(QLabel("Line"))
+        self._line_style_combo = QComboBox()
+        self._line_style_combo.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        tb.addWidget(self._line_style_combo)
+        self._line_width_spin = QDoubleSpinBox()
+        self._line_width_spin.setRange(0.5, 12.0)
+        self._line_width_spin.setSingleStep(0.5)
+        self._line_width_spin.setValue(2.0)
+        tb.addWidget(self._line_width_spin)
+        self._line_apply_btn = QPushButton("Apply")
+        self._line_apply_btn.clicked.connect(self._apply_line_style_to_selection)
+        tb.addWidget(self._line_apply_btn)
 
     # ------------------------------------------------------------------
     # Signals
@@ -435,16 +460,8 @@ class _CanvasAnnotationToolbar(QWidget):
             self._scene.set_component_layer_visible)
         self._layers_panel.annotation_layer_toggled.connect(
             self._scene.set_annotation_layer_visible)
-        self._layers_panel.annotation_tool_selected.connect(
-            self._on_annotation_tool_selected)
-        # Feature 9: annotation fill toggle
-        self._layers_panel.annotation_fill_toggled.connect(
-            self._scene.set_annotation_fill)
-        # Fix 9: reset annotation tool to select when ESC is pressed
         self._scene.annotation_tool_reset.connect(
-            self._layers_panel.reset_annotation_tool)
-        self._scene.annotation_tool_reset.connect(
-            lambda: self._anno_toolbar.set_active_tool("select"))
+            lambda: self._on_annotation_tool_selected("select"))
 
     # ------------------------------------------------------------------
     # Slots
@@ -453,9 +470,7 @@ class _CanvasAnnotationToolbar(QWidget):
     def _on_select_mode(self) -> None:
         """Switch to select mode and reset annotation tool (Bug 3 fix)."""
         self._scene.set_mode(SceneMode.SELECT)
-        # Bug 3 fix: also reset the annotation tool so the Layers panel UI
-        # correctly shows 'Select' after pressing ESC.
-        self._layers_panel.reset_annotation_tool()
+        self._on_annotation_tool_selected("select")
 
     def _on_place_requested(self, comp_type: str) -> None:
         self._scene.set_mode(SceneMode.PLACE_COMPONENT)
@@ -467,8 +482,7 @@ class _CanvasAnnotationToolbar(QWidget):
     def _on_component_placed(self, comp: dict) -> None:
         self._modified = True
         self._update_title()
-        # Issue 5: reset annotation tool to "select" whenever a component is placed
-        self._layers_panel.reset_annotation_tool()
+        self._on_annotation_tool_selected("select")
 
     def _on_wire_drawn(self, wire: dict) -> None:
         self._modified = True
@@ -514,6 +528,12 @@ class _CanvasAnnotationToolbar(QWidget):
         """Issue 8: toggle label dragging globally."""
         from ..components.base import LabelItem
         LabelItem.set_dragging_enabled(enabled)
+
+    def _apply_line_style_to_selection(self) -> None:
+        style = self._line_style_combo.currentText()
+        width = float(self._line_width_spin.value())
+        self._scene.apply_line_style_to_selection(style, width)
+        self._scene.set_annotation_pen(style, width)
 
     # ------------------------------------------------------------------
     # File operations

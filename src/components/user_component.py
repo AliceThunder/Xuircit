@@ -276,7 +276,11 @@ class UserComponentItem(ComponentItem):
 
         # Render from stored commands
         for cmd in self._udef.symbol:
-            painter.setPen(_std_pen(self._color))
+            painter.setPen(_cmd_pen(
+                self._color,
+                getattr(cmd, "line_style", "solid"),
+                float(getattr(cmd, "line_width", 2.0)),
+            ))
             # Issue 6: support solid (filled) shapes
             if cmd.filled:
                 painter.setBrush(QBrush(QColor(self._color)))
@@ -308,4 +312,17 @@ class UserComponentItem(ComponentItem):
                         path.closeSubpath()
                         painter.fillPath(path, QBrush(QColor(self._color)))
                     painter.drawPath(path)
+def _cmd_pen(color: str, style_name: str, width: float) -> QPen:
+    pen = QPen(QColor(color), width)
+    style_map = {
+        "solid": Qt.PenStyle.SolidLine,
+        "dash": Qt.PenStyle.DashLine,
+        "dot": Qt.PenStyle.DotLine,
+        "dash_dot": Qt.PenStyle.DashDotLine,
+        "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
+    }
+    pen.setStyle(style_map.get(style_name, Qt.PenStyle.SolidLine))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
 

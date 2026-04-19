@@ -114,7 +114,64 @@ class _SymbolScene(QGraphicsScene):
         self._val_marker: "_PropertyMarkerItem | None" = None
         # Feature 6: markers for extra properties (one per LabelDef, by index)
         self._extra_markers: list["_PropertyMarkerItem | None"] = []
+        try:
+            from ..app.settings import AppSettings
+            s = AppSettings()
+            self._line_style_name = s.editor_line_style()
+            self._line_width = s.editor_line_width()
+        except Exception:
+            self._line_style_name = "solid"
+            self._line_width = 2.0
         self._draw_origin()
+
+    def _draw_pen(self) -> QPen:
+        pen = QPen(QColor("#111111"), self._line_width)
+        style_map = {
+            "solid": Qt.PenStyle.SolidLine,
+            "dash": Qt.PenStyle.DashLine,
+            "dot": Qt.PenStyle.DotLine,
+            "dash_dot": Qt.PenStyle.DashDotLine,
+            "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
+        }
+        pen.setStyle(style_map.get(self._line_style_name, Qt.PenStyle.SolidLine))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        return pen
+
+    @staticmethod
+    def _pen_for_cmd(cmd: SymbolCmd) -> QPen:
+        pen = QPen(QColor("#111111"), float(getattr(cmd, "line_width", 2.0)))
+        style_map = {
+            "solid": Qt.PenStyle.SolidLine,
+            "dash": Qt.PenStyle.DashLine,
+            "dot": Qt.PenStyle.DotLine,
+            "dash_dot": Qt.PenStyle.DashDotLine,
+            "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
+        }
+        pen.setStyle(style_map.get(
+            str(getattr(cmd, "line_style", "solid")), Qt.PenStyle.SolidLine
+        ))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        return pen
+
+    def set_line_style(self, style_name: str, width: float) -> None:
+        self._line_style_name = style_name
+        self._line_width = max(0.5, float(width))
+
+    def apply_line_style_to_selected(self, style_name: str, width: float) -> None:
+        selected = [it for it in self.selectedItems() if it in self._sym_items]
+        if not selected:
+            return
+        before = self._snapshot()
+        self.set_line_style(style_name, width)
+        for it in selected:
+            idx = self._sym_items.index(it)
+            cmd = self.sym_cmds[idx]
+            cmd.line_style = style_name
+            cmd.line_width = width
+            it.setPen(self._draw_pen())
+        self._push_undo("Set Line Style", before, self._snapshot())
 
     def _draw_origin(self) -> None:
         """Draw the origin crosshair."""
@@ -190,9 +247,9 @@ class _SymbolScene(QGraphicsScene):
             self.removeItem(p)
         self.pins.clear()
 
-        pen = QPen(QColor("#111111"), 2)
         for cmd in snap.get("cmds", []):
             self.sym_cmds.append(cmd)
+            pen = self._pen_for_cmd(cmd)
             if cmd.kind == "line":
                 it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
             elif cmd.kind == "rect":
@@ -270,7 +327,7 @@ class _SymbolScene(QGraphicsScene):
             self._poly_points.append(draw_pos)
             if len(self._poly_points) >= 2:
                 # Draw the confirmed segment
-                pen = QPen(QColor("#111111"), 2)
+                pen = self._draw_pen()
                 p1, p2 = self._poly_points[-2], self._poly_points[-1]
                 seg = self.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
                 self._poly_segs.append(seg)
@@ -285,9 +342,11 @@ class _SymbolScene(QGraphicsScene):
                 before = self._snapshot()
                 cmd = SymbolCmd("line",
                                 x1=self._line_start.x(), y1=self._line_start.y(),
-                                x2=draw_pos.x(), y2=draw_pos.y())
+                                x2=draw_pos.x(), y2=draw_pos.y(),
+                                line_style=self._line_style_name,
+                                line_width=self._line_width)
                 self.sym_cmds.append(cmd)
-                pen = QPen(QColor("#111111"), 2)
+                pen = self._draw_pen()
                 it = self.addLine(self._line_start.x(), self._line_start.y(),
                                   draw_pos.x(), draw_pos.y(), pen)
                 it.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -308,9 +367,11 @@ class _SymbolScene(QGraphicsScene):
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 cmd = SymbolCmd("rect", x1=rx, y1=ry, w=w, h=h,
+                                line_style=self._line_style_name,
+                                line_width=self._line_width,
                                 filled=self._fill_mode)
                 self.sym_cmds.append(cmd)
-                pen = QPen(QColor("#111111"), 2)
+                pen = self._draw_pen()
                 brush = (QBrush(QColor("#333333")) if self._fill_mode
                          else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addRect(QRectF(rx, ry, w, h), pen, brush)
@@ -332,9 +393,11 @@ class _SymbolScene(QGraphicsScene):
                 w, h = abs(x2 - x1), abs(y2 - y1)
                 rx, ry = min(x1, x2), min(y1, y2)
                 cmd = SymbolCmd("ellipse", x1=rx + w / 2, y1=ry + h / 2,
-                                w=w, h=h, filled=self._fill_mode)
+                                w=w, h=h, filled=self._fill_mode,
+                                line_style=self._line_style_name,
+                                line_width=self._line_width)
                 self.sym_cmds.append(cmd)
-                pen = QPen(QColor("#111111"), 2)
+                pen = self._draw_pen()
                 brush = (QBrush(QColor("#333333")) if self._fill_mode
                          else QBrush(Qt.BrushStyle.NoBrush))
                 it = self.addEllipse(QRectF(rx, ry, w, h), pen, brush)
@@ -403,7 +466,13 @@ class _SymbolScene(QGraphicsScene):
             return
         before = self._snapshot()
         pts = [[p.x(), p.y()] for p in self._poly_points]
-        cmd = SymbolCmd("polyline", filled=self._fill_mode, points=pts)
+        cmd = SymbolCmd(
+            "polyline",
+            filled=self._fill_mode,
+            points=pts,
+            line_style=self._line_style_name,
+            line_width=self._line_width,
+        )
         self.sym_cmds.append(cmd)
 
         # Build a QGraphicsPathItem for the symbol editor display
@@ -414,7 +483,7 @@ class _SymbolScene(QGraphicsScene):
             path.lineTo(px, py)
         if self._fill_mode and len(pts) >= 3:
             path.closeSubpath()
-        pen = QPen(QColor("#111111"), 2)
+        pen = self._draw_pen()
         it = QGraphicsPathItem(path)
         it.setPen(pen)
         if self._fill_mode and len(pts) >= 3:
@@ -489,7 +558,6 @@ class _SymbolScene(QGraphicsScene):
         if key == Qt.Key.Key_V and ctrl:
             if self._sym_clipboard:
                 before = self._snapshot()
-                pen = QPen(QColor("#111111"), 2)
                 for cmd in self._sym_clipboard:
                     # Offset the pasted shape by sub-grid amount
                     c = copy.deepcopy(cmd)
@@ -500,11 +568,14 @@ class _SymbolScene(QGraphicsScene):
                         c.y2 += SUB_GRID
                     self.sym_cmds.append(c)
                     if c.kind == "line":
+                        pen = self._pen_for_cmd(c)
                         it = self.addLine(c.x1, c.y1, c.x2, c.y2, pen)
                     elif c.kind == "rect":
+                        pen = self._pen_for_cmd(c)
                         it = self.addRect(QRectF(c.x1, c.y1, c.w, c.h), pen,
                                           QBrush(Qt.BrushStyle.NoBrush))
                     elif c.kind == "ellipse":
+                        pen = self._pen_for_cmd(c)
                         rx2, ry2 = c.w / 2, c.h / 2
                         it = self.addEllipse(
                             QRectF(c.x1 - rx2, c.y1 - ry2, c.w, c.h), pen,
@@ -652,8 +723,8 @@ class _SymbolScene(QGraphicsScene):
 
     def load_def(self, udef: UserCompDef) -> None:
         self.clear_symbol()
-        pen = QPen(QColor("#111111"), 2)
         for cmd in udef.symbol:
+            pen = self._pen_for_cmd(cmd)
             if cmd.kind == "line":
                 it = self.addLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, pen)
             elif cmd.kind == "rect":
@@ -1069,6 +1140,25 @@ class UserComponentEditorDialog(QDialog):
         self._float_toolbar = _FloatingToolbar(
             self._sym_view, self._sym_scene
         )
+        line_row = QHBoxLayout()
+        line_row.addWidget(QLabel("Line style:"))
+        self._line_style_combo = QComboBox()
+        self._line_style_combo.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        line_row.addWidget(self._line_style_combo)
+        line_row.addWidget(QLabel("Width:"))
+        self._line_width_spin = QDoubleSpinBox()
+        self._line_width_spin.setRange(0.5, 12.0)
+        self._line_width_spin.setSingleStep(0.5)
+        line_row.addWidget(self._line_width_spin)
+        self._line_apply_btn = QPushButton("Apply to Selection")
+        self._line_apply_btn.clicked.connect(self._apply_symbol_line_style)
+        line_row.addWidget(self._line_apply_btn)
+        line_row.addStretch()
+        left.addLayout(line_row)
+        self._line_style_combo.setCurrentText(self._sym_scene._line_style_name)
+        self._line_width_spin.setValue(self._sym_scene._line_width)
 
         # ── right: properties panel ───────────────────────────────────
         right = QVBoxLayout()
@@ -1643,6 +1733,12 @@ class UserComponentEditorDialog(QDialog):
 
     # ------------------------------------------------------------------
 
+    def _apply_symbol_line_style(self) -> None:
+        style = self._line_style_combo.currentText()
+        width = float(self._line_width_spin.value())
+        self._sym_scene.set_line_style(style, width)
+        self._sym_scene.apply_line_style_to_selected(style, width)
+
     def _on_accept(self) -> None:
         type_name = self._name_edit.text().strip()
         display = self._display_edit.text().strip() or type_name
@@ -2090,4 +2186,3 @@ class LibraryManagerDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 UserLibraryManagerDialog = LibraryManagerDialog
-

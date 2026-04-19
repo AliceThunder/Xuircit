@@ -292,10 +292,14 @@ class CircuitScene(QGraphicsScene):
             from ..app.settings import AppSettings as _AS
             _s = _AS()
             self._anno_color: str = _s.annotation_color()
+            self._anno_line_style: str = _s.annotation_line_style()
+            self._anno_line_width: float = _s.annotation_line_width()
             _bg = _s.canvas_bg_color()
             self._show_grid = _s.show_grid()
         except Exception:
             self._anno_color = "#cc2222"
+            self._anno_line_style = "solid"
+            self._anno_line_width = 2.0
             _bg = "#f8f8f8"
         self._anno_fill: bool = False
 
@@ -360,6 +364,26 @@ class CircuitScene(QGraphicsScene):
     def set_annotation_fill(self, fill: bool) -> None:
         """Feature #6: set annotation fill mode."""
         self._anno_fill = fill
+
+    def set_annotation_pen(self, style_name: str, width: float) -> None:
+        self._anno_line_style = style_name
+        self._anno_line_width = max(0.5, float(width))
+
+    def apply_line_style_to_selection(self, style_name: str, width: float) -> None:
+        """Apply line style/width to selected wires and annotations."""
+        from ..canvas.annotation import AnnotationItem
+        changed = False
+        before = self._take_snapshot()
+        for item in self.selectedItems():
+            if isinstance(item, WireItem):
+                item.set_line_style(style_name, width)
+                changed = True
+            elif isinstance(item, AnnotationItem):
+                item.set_line_style(style_name, width)
+                changed = True
+        if changed:
+            after = self._take_snapshot()
+            self._push_undo("Set Line Style", before, after)
 
     def _anno_cancel(self) -> None:
         """Cancel any in-progress annotation drawing."""
@@ -616,7 +640,16 @@ class CircuitScene(QGraphicsScene):
         if tool == "polyline":
             self._anno_poly_pts.append(pos)
             if len(self._anno_poly_pts) >= 2:
-                pen = QPen(QC(self._anno_color), 2)
+                pen = QPen(QC(self._anno_color), self._anno_line_width)
+                from PyQt6.QtCore import Qt as Qt_
+                _map = {
+                    "solid": Qt_.PenStyle.SolidLine,
+                    "dash": Qt_.PenStyle.DashLine,
+                    "dot": Qt_.PenStyle.DotLine,
+                    "dash_dot": Qt_.PenStyle.DashDotLine,
+                    "dash_dot_dot": Qt_.PenStyle.DashDotDotLine,
+                }
+                pen.setStyle(_map.get(self._anno_line_style, Qt_.PenStyle.SolidLine))
                 p1, p2 = self._anno_poly_pts[-2], self._anno_poly_pts[-1]
                 seg = self.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
                 self._anno_poly_segs.append(seg)
@@ -663,7 +696,7 @@ class CircuitScene(QGraphicsScene):
         from PyQt6.QtGui import QPen, QColor as QC
         from PyQt6.QtCore import Qt as Qt_
         tool = self._annotation_tool
-        pen = QPen(QC(self._anno_color), 1.5, Qt_.PenStyle.DashLine)
+        pen = QPen(QC(self._anno_color), max(1.0, self._anno_line_width * 0.75), Qt_.PenStyle.DashLine)
 
         if self._anno_temp is not None:
             self.removeItem(self._anno_temp)
@@ -709,6 +742,8 @@ class CircuitScene(QGraphicsScene):
             points=pts,
             closed=False,
             color=self._anno_color,
+            line_width=self._anno_line_width,
+            line_style=self._anno_line_style,
             fill=self._anno_fill,
         )
         if not self._annotation_layer_visible:
@@ -734,6 +769,8 @@ class CircuitScene(QGraphicsScene):
             points=pts,
             closed=self._anno_fill,
             color=self._anno_color,
+            line_width=self._anno_line_width,
+            line_style=self._anno_line_style,
             fill=self._anno_fill,
         )
         if not self._annotation_layer_visible:

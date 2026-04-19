@@ -32,6 +32,8 @@ class SymbolCmd:
     w: float = 0.0
     h: float = 0.0
     text: str = ""
+    line_style: str = "solid"
+    line_width: float = 2.0
     filled: bool = False  # Issue 6: solid fill for rect/ellipse/polyline
     # Polyline: list of [x, y] pairs (used when kind == "polyline")
     points: list = field(default_factory=list)
@@ -132,6 +134,8 @@ class UserCompDef:
                     w=s.get("w", 0.0),
                     h=s.get("h", 0.0),
                     text=s.get("text", ""),
+                    line_style=s.get("line_style", "solid"),
+                    line_width=s.get("line_width", 2.0),
                     filled=s.get("filled", False),
                     points=s.get("points", []),
                 ))

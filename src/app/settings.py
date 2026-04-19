@@ -33,8 +33,14 @@ _DEFAULTS: dict = {
     "shortcuts": dict(_DEFAULT_SHORTCUTS),
     # Task 7: wire color (default black)
     "wire_color": "#000000",
+    "wire_line_style": "solid",
+    "wire_line_width": 2.0,
     # Task 8: additional canvas settings
     "annotation_color": "#cc2222",
+    "annotation_line_style": "solid",
+    "annotation_line_width": 2.0,
+    "editor_line_style": "solid",
+    "editor_line_width": 2.0,
     "canvas_bg_color": "#f8f8f8",
     "show_grid": True,
 }
@@ -78,6 +84,24 @@ class AppSettings:
     def annotation_color(self) -> str:
         """Task 8: default annotation color."""
         return str(self.get("annotation_color", "#cc2222"))
+
+    def wire_line_style(self) -> str:
+        return str(self.get("wire_line_style", "solid"))
+
+    def wire_line_width(self) -> float:
+        return float(self.get("wire_line_width", 2.0))
+
+    def annotation_line_style(self) -> str:
+        return str(self.get("annotation_line_style", "solid"))
+
+    def annotation_line_width(self) -> float:
+        return float(self.get("annotation_line_width", 2.0))
+
+    def editor_line_style(self) -> str:
+        return str(self.get("editor_line_style", "solid"))
+
+    def editor_line_width(self) -> float:
+        return float(self.get("editor_line_width", 2.0))
 
     def canvas_bg_color(self) -> str:
         """Task 8: canvas background color."""

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QDoubleSpinBox,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -135,6 +136,17 @@ class SettingsDialog(QDialog):
         # Task 7: wire color setting
         self._wire_color_btn = _ColorButton(settings.wire_color())
         wire_form.addRow("Default wire color:", self._wire_color_btn)
+        self._wire_style_combo = QComboBox()
+        self._wire_style_combo.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        self._wire_style_combo.setCurrentText(settings.wire_line_style())
+        wire_form.addRow("Default wire line style:", self._wire_style_combo)
+        self._wire_width_spin = QDoubleSpinBox()
+        self._wire_width_spin.setRange(0.5, 12.0)
+        self._wire_width_spin.setSingleStep(0.5)
+        self._wire_width_spin.setValue(settings.wire_line_width())
+        wire_form.addRow("Default wire line width:", self._wire_width_spin)
         canvas_layout.addWidget(wire_box)
 
         anno_box = QGroupBox("Annotation Settings")
@@ -142,7 +154,33 @@ class SettingsDialog(QDialog):
         # Task 8: default annotation color
         self._anno_color_btn = _ColorButton(settings.annotation_color())
         anno_form.addRow("Default annotation color:", self._anno_color_btn)
+        self._anno_style_combo = QComboBox()
+        self._anno_style_combo.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        self._anno_style_combo.setCurrentText(settings.annotation_line_style())
+        anno_form.addRow("Default annotation line style:", self._anno_style_combo)
+        self._anno_width_spin = QDoubleSpinBox()
+        self._anno_width_spin.setRange(0.5, 12.0)
+        self._anno_width_spin.setSingleStep(0.5)
+        self._anno_width_spin.setValue(settings.annotation_line_width())
+        anno_form.addRow("Default annotation line width:", self._anno_width_spin)
         canvas_layout.addWidget(anno_box)
+
+        editor_box = QGroupBox("Component Editor Drawing")
+        editor_form = QFormLayout(editor_box)
+        self._editor_style_combo = QComboBox()
+        self._editor_style_combo.addItems(
+            ["solid", "dash", "dot", "dash_dot", "dash_dot_dot"]
+        )
+        self._editor_style_combo.setCurrentText(settings.editor_line_style())
+        editor_form.addRow("Default editor line style:", self._editor_style_combo)
+        self._editor_width_spin = QDoubleSpinBox()
+        self._editor_width_spin.setRange(0.5, 12.0)
+        self._editor_width_spin.setSingleStep(0.5)
+        self._editor_width_spin.setValue(settings.editor_line_width())
+        editor_form.addRow("Default editor line width:", self._editor_width_spin)
+        canvas_layout.addWidget(editor_box)
 
         bg_box = QGroupBox("Canvas Appearance")
         bg_form = QFormLayout(bg_box)
@@ -211,9 +249,15 @@ class SettingsDialog(QDialog):
 
         # Task 7: save wire color
         settings.set("wire_color", self._wire_color_btn.color())
+        settings.set("wire_line_style", self._wire_style_combo.currentText())
+        settings.set("wire_line_width", self._wire_width_spin.value())
 
         # Task 8: save canvas settings
         settings.set("annotation_color", self._anno_color_btn.color())
+        settings.set("annotation_line_style", self._anno_style_combo.currentText())
+        settings.set("annotation_line_width", self._anno_width_spin.value())
+        settings.set("editor_line_style", self._editor_style_combo.currentText())
+        settings.set("editor_line_width", self._editor_width_spin.value())
         settings.set("canvas_bg_color", self._bg_color_btn.color())
         settings.set("show_grid", self._show_grid_cb.isChecked())
 

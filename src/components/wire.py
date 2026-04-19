@@ -14,6 +14,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+_LINE_STYLE_MAP = {
+    "solid": Qt.PenStyle.SolidLine,
+    "dash": Qt.PenStyle.DashLine,
+    "dot": Qt.PenStyle.DotLine,
+    "dash_dot": Qt.PenStyle.DashDotLine,
+    "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
+}
+
+
+def _qt_style(name: str) -> Qt.PenStyle:
+    return _LINE_STYLE_MAP.get(name, Qt.PenStyle.SolidLine)
+
 
 class WireItem(QGraphicsPathItem):
     """A wire between two points, auto-routed at 90° angles."""
@@ -35,14 +47,16 @@ class WireItem(QGraphicsPathItem):
         # Task 7: read default wire color from settings
         try:
             from ..app.settings import AppSettings
-            self._color: str = AppSettings().wire_color()
+            s = AppSettings()
+            self._color: str = s.wire_color()
+            self._line_style_name: str = s.wire_line_style()
+            self._line_width: float = s.wire_line_width()
         except Exception:
             self._color = self._DEFAULT_COLOR
+            self._line_style_name = "solid"
+            self._line_width = 2.0
 
-        pen = QPen(QColor(self._color), 2.0)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        self.setPen(pen)
+        self._apply_pen()
         if not is_auto:
             self.setFlag(self.GraphicsItemFlag.ItemIsSelectable)
         else:
@@ -62,13 +76,23 @@ class WireItem(QGraphicsPathItem):
         path.lineTo(e)
         self.setPath(path)
 
-    def set_color(self, color: str) -> None:
-        """Feature #8: change the wire's display color."""
-        self._color = color
-        pen = QPen(QColor(color), 2.0)
+    def _apply_pen(self) -> None:
+        pen = QPen(QColor(self._color), self._line_width)
+        pen.setStyle(_qt_style(self._line_style_name))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self.setPen(pen)
+
+    def set_color(self, color: str) -> None:
+        self._color = color
+        self._apply_pen()
+        self.update()
+
+    def set_line_style(self, style_name: str, width: float | None = None) -> None:
+        self._line_style_name = style_name
+        if width is not None:
+            self._line_width = max(0.5, float(width))
+        self._apply_pen()
         self.update()
 
     def update_endpoints(self, start: QPointF, end: QPointF) -> None:
@@ -106,6 +130,8 @@ class WireItem(QGraphicsPathItem):
             "end_pin": list(self.end_pin) if self.end_pin else None,
             "net_name": self.net_name,
             "color": self._color,
+            "line_style": self._line_style_name,
+            "line_width": self._line_width,
         }
 
     @classmethod
@@ -122,6 +148,10 @@ class WireItem(QGraphicsPathItem):
         # Feature #8: restore wire color
         if "color" in data:
             item.set_color(data["color"])
+        item.set_line_style(
+            str(data.get("line_style", "solid")),
+            float(data.get("line_width", 2.0)),
+        )
         return item
 
 
