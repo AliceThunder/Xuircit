@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..components.wire import _qt_style as _line_style_qt
+
 # Z-value for annotation items (above components)
 ANNOTATION_Z = 20
 
@@ -49,6 +51,7 @@ class AnnotationItem(QGraphicsPathItem):
         closed: bool = False,
         color: str = _DEFAULT_ANNO_COLOR,
         line_width: float = 2.0,
+        line_style: str = "solid",
         fill: bool = False,
         anno_id: str | None = None,
     ) -> None:
@@ -59,6 +62,7 @@ class AnnotationItem(QGraphicsPathItem):
         self.closed = closed
         self.anno_color = color
         self.line_width = line_width
+        self.line_style = line_style
         self.fill = fill
         self.setZValue(ANNOTATION_Z)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -71,6 +75,7 @@ class AnnotationItem(QGraphicsPathItem):
 
     def _rebuild_path(self) -> None:
         pen = QPen(QColor(self.anno_color), self.line_width)
+        pen.setStyle(_line_style_qt(self.line_style))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self.setPen(pen)
@@ -171,6 +176,12 @@ class AnnotationItem(QGraphicsPathItem):
                 after = scene._take_snapshot()
                 scene._push_undo("Set Annotation Color", before, after)
 
+    def set_line_style(self, style_name: str, width: float | None = None) -> None:
+        self.line_style = style_name
+        if width is not None:
+            self.line_width = max(0.5, float(width))
+        self._rebuild_path()
+
     def _delete_self(self) -> None:
         scene = self.scene()
         if scene is not None:
@@ -199,6 +210,7 @@ class AnnotationItem(QGraphicsPathItem):
             "closed": self.closed,
             "color": self.anno_color,
             "line_width": self.line_width,
+            "line_style": self.line_style,
             "fill": self.fill,
         }
 
@@ -213,6 +225,7 @@ class AnnotationItem(QGraphicsPathItem):
             closed=data.get("closed", False),
             color=data.get("color", _DEFAULT_ANNO_COLOR),
             line_width=data.get("line_width", 2.0),
+            line_style=data.get("line_style", "solid"),
             fill=data.get("fill", False),
             anno_id=data.get("id"),
         )
@@ -542,4 +555,3 @@ class _RichTextAnnotationDialog(QDialog):
 
 # Keep the old name as an alias for backward compatibility (used by tests).
 _TextAnnotationDialog = _RichTextAnnotationDialog
-

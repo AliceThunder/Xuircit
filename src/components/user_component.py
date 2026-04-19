@@ -8,6 +8,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 
 from .base import ComponentItem, LabelItem, _std_pen
 from ..models.user_library import UserCompDef
+from .wire import _qt_style as _wire_qt_style
 
 
 def _apply_label_style(label: LabelItem, style: dict) -> None:
@@ -276,7 +277,11 @@ class UserComponentItem(ComponentItem):
 
         # Render from stored commands
         for cmd in self._udef.symbol:
-            painter.setPen(_std_pen(self._color))
+            painter.setPen(_cmd_pen(
+                self._color,
+                getattr(cmd, "line_style", "solid"),
+                float(getattr(cmd, "line_width", 2.0)),
+            ))
             # Issue 6: support solid (filled) shapes
             if cmd.filled:
                 painter.setBrush(QBrush(QColor(self._color)))
@@ -308,4 +313,10 @@ class UserComponentItem(ComponentItem):
                         path.closeSubpath()
                         painter.fillPath(path, QBrush(QColor(self._color)))
                     painter.drawPath(path)
+def _cmd_pen(color: str, style_name: str, width: float) -> QPen:
+    pen = QPen(QColor(color), width)
+    pen.setStyle(_wire_qt_style(style_name))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
 

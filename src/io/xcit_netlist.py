@@ -265,6 +265,11 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
             meta["lrc"] = comp["label_ref_color"]
         if comp.get("label_val_color") and comp["label_val_color"] != _DEFAULT_LABEL_COLOR:
             meta["lvc"] = comp["label_val_color"]
+        # Label visibility flags — omit when True (the default) to keep lines short
+        if not comp.get("ref_visible", True):
+            meta["rv"] = 0
+        if not comp.get("val_visible", True):
+            meta["vv"] = 0
         meta_str = ("  " + json.dumps(meta, separators=(",", ":"))) if meta else ""
         lines.append(
             f"{ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_str}  {ctype}"
@@ -278,7 +283,9 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
                      if _is_virtual_component(c.get("type", ""), c.get("library_id"), lm)]
     if virtual_comps:
         lines.append(".xcit_virtual")
-        lines.append("* type_name  ref  x  y  rotation  flip_h  flip_v  library_id")
+        lines.append(
+            "* type_name  ref  x  y  rotation  flip_h  flip_v  library_id  [json_meta]"
+        )
         for comp in virtual_comps:
             ctype = comp.get("type", "ELBOW")
             ref = comp.get("ref", "V?")
@@ -288,8 +295,12 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
             fh = 1 if comp.get("flip_h", False) else 0
             fv = 1 if comp.get("flip_v", False) else 0
             lib_id = comp.get("library_id") or "preset"
+            vmeta: dict[str, Any] = {}
+            if comp.get("color") and comp["color"] != _DEFAULT_COMPONENT_COLOR:
+                vmeta["c"] = comp["color"]
+            vmeta_str = ("  " + json.dumps(vmeta, separators=(",", ":"))) if vmeta else ""
             lines.append(
-                f"{ctype}  {ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}"
+                f"{ctype}  {ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}{vmeta_str}"
             )
         lines.append(".end_xcit_virtual")
         lines.append("")
@@ -459,6 +470,9 @@ def parse_xcit_netlist(
             "color": meta.get("c"),
             "label_ref_color": meta.get("lrc"),
             "label_val_color": meta.get("lvc"),
+            # Label visibility flags (absent → True)
+            "ref_visible": meta.get("rv", 1) != 0,
+            "val_visible": meta.get("vv", 1) != 0,
         }
 
     # Parse .xcit_virtual section (Issue 5)
@@ -479,6 +493,14 @@ def parse_xcit_netlist(
             vfh = bool(int(parts[5]))
             vfv = bool(int(parts[6]))
             vlib = parts[7] if len(parts) > 7 else "preset"
+            # Parse optional JSON metadata (color, etc.)
+            vmeta: dict[str, Any] = {}
+            vjson_idx = 8
+            if len(parts) > vjson_idx and parts[vjson_idx].startswith("{"):
+                try:
+                    vmeta = json.loads(" ".join(parts[vjson_idx:]))
+                except (json.JSONDecodeError, ValueError):
+                    pass
         except (ValueError, IndexError):
             continue
         virtual_comps.append({
@@ -490,6 +512,7 @@ def parse_xcit_netlist(
             "flip_h": vfh,
             "flip_v": vfv,
             "library_id": vlib,
+            "color": vmeta.get("c"),
         })
 
     # Parse .xcit_annotation section (Fix 11)
