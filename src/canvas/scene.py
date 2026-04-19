@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import re
 import uuid
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
@@ -40,6 +41,18 @@ class SceneMode(Enum):
 _PIN_SNAP_RADIUS = GRID_SIZE * 0.8
 # Tolerance for treating two coordinates as equal (used for aligned-pin detection).
 _COORD_EPSILON = 1.0
+
+
+@dataclass(frozen=True)
+class _AutoPin:
+    """Normalized endpoint info used by auto-wire generation."""
+
+    comp: ComponentItem
+    comp_id: str
+    pin_name: str
+    pos: QPointF
+    axis: str          # "h" or "v"
+    direction: int     # h: -1=left/+1=right; v: -1=up/+1=down
 
 
 def _migrate_label_pos(pos: list[float], rotation: float) -> list[float]:
@@ -80,7 +93,7 @@ def _fix_node_value_split(
         if result is None:
             return comp
         entry, _ = result
-        pin_count = len(entry.pin_names) if entry.is_builtin else len(entry.pins)
+        pin_count = len(entry.pins)
         if pin_count == 0:
             return comp
         nodes: list[str] = list(comp.get("nodes", []))
@@ -98,59 +111,6 @@ def _fix_node_value_split(
         pass
     return comp
 
-
-
-
-
-# Populated lazily on first access
-_COMP_REGISTRY: dict[str, type[ComponentItem]] = {}
-
-
-def _registry() -> dict[str, type[ComponentItem]]:
-    global _COMP_REGISTRY
-    if not _COMP_REGISTRY:
-        from ..components.passive import (
-            ResistorItem, CapacitorItem, InductorItem, TransformerItem,
-        )
-        from ..components.sources import (
-            VoltageSourceItem, CurrentSourceItem,
-            VCVSItem, CCCSItem, VCCSItem, CCVSItem,
-        )
-        from ..components.semiconductors import (
-            DiodeItem, ZenerDiodeItem, NPNItem, PNPItem,
-            NMOSItem, PMOSItem, IGBTItem,
-        )
-        from ..components.power import IdealSwitchItem, SCRItem, TRIACItem
-        from ..components.wire import WireElbowItem, WireTeeItem
-
-        _COMP_REGISTRY = {
-            "R": ResistorItem,
-            "C": CapacitorItem,
-            "L": InductorItem,
-            "T": TransformerItem,
-            "V": VoltageSourceItem,
-            "I": CurrentSourceItem,
-            "E": VCVSItem,
-            "F": CCCSItem,
-            "G": VCCSItem,
-            "H": CCVSItem,
-            "D": DiodeItem,
-            "Z": ZenerDiodeItem,
-            "Q_NPN": NPNItem,
-            "Q_PNP": PNPItem,
-            "M_NMOS": NMOSItem,
-            "M_PMOS": PMOSItem,
-            "IGBT": IGBTItem,
-            "SW": IdealSwitchItem,
-            "SCR": SCRItem,
-            "TRIAC": TRIACItem,
-            "GND": GroundItem,
-            "ELBOW": WireElbowItem,
-            "TEE": WireTeeItem,
-        }
-    return _COMP_REGISTRY
-
-
 def create_component_item(
     comp_type: str,
     ref: str = "X1",
@@ -161,58 +121,95 @@ def create_component_item(
 ) -> ComponentItem | None:
     """Create a ComponentItem for *comp_type*.
 
-    The unified LibraryManager is consulted first.  If the entry is a
-    built-in type (``is_builtin=True``) and a renderer class is registered,
-    that class is used.  Otherwise a UserComponentItem is created from the
-    entry's ``pins`` / ``symbol`` data.
+    Components are instantiated strictly from user library definitions.
     """
     try:
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
         result = lm.find_entry(comp_type, library_id)
-        if result is not None:
-            entry, found_lib_id = result
-            if entry.is_builtin:
-                cls = _registry().get(comp_type)
-                if cls is not None:
-                    item = cls(ref=ref, value=value,
-                               params=params or {}, comp_id=comp_id)
-                    item.library_id = found_lib_id
-                    return item
-            # User-defined rendering
-            from ..models.user_library import UserCompDef, PinDef, SymbolCmd, LabelDef
-            from ..components.user_component import UserComponentItem
-            udef = UserCompDef(
-                type_name=entry.type_name,
-                display_name=entry.display_name,
-                category=entry.category,
-                description=entry.description,
-                ref_prefix=entry.ref_prefix,
-                default_value=entry.default_value,
-                pins=[PinDef(**p) for p in entry.pins],
-                symbol=[SymbolCmd(**s) for s in entry.symbol],
-                ref_label_offset=entry.ref_label_offset,
-                val_label_offset=entry.val_label_offset,
-                # Bug 2 fix: pass V-perspective offsets so rotated components
-                # use the correct label positions stored in the component editor.
-                ref_label_offset_v=entry.ref_label_offset_v,
-                val_label_offset_v=entry.val_label_offset_v,
-                ref_label_style=entry.ref_label_style,
-                val_label_style=entry.val_label_style,
-                labels=[LabelDef(**lb) for lb in entry.labels],
-                is_virtual=entry.is_virtual,
-            )
-            return UserComponentItem(udef, ref=ref, value=value,
-                                     params=params or {}, comp_id=comp_id,
-                                     library_id=found_lib_id)
-    except Exception:
-        pass
+        if result is None:
+            return None
+        entry, found_lib_id = result
+        from ..models.user_library import UserCompDef, PinDef, SymbolCmd, LabelDef
+        from ..components.user_component import UserComponentItem
 
-    # Fallback: legacy registry lookup
-    cls = _registry().get(comp_type)
-    if cls is None:
+        pins: list[PinDef] = []
+        for p in entry.pins:
+            try:
+                pins.append(PinDef(
+                    name=p.get("name", ""),
+                    x=float(p.get("x", 0.0)),
+                    y=float(p.get("y", 0.0)),
+                ))
+            except Exception:
+                continue
+
+        symbol: list[SymbolCmd] = []
+        for s in entry.symbol:
+            try:
+                symbol.append(SymbolCmd(
+                    kind=s.get("kind", "line"),
+                    x1=float(s.get("x1", 0.0)),
+                    y1=float(s.get("y1", 0.0)),
+                    x2=float(s.get("x2", 0.0)),
+                    y2=float(s.get("y2", 0.0)),
+                    w=float(s.get("w", 0.0)),
+                    h=float(s.get("h", 0.0)),
+                    text=str(s.get("text", "")),
+                    line_style=str(s.get("line_style", "solid")),
+                    line_width=float(s.get("line_width", 2.0)),
+                    filled=bool(s.get("filled", False)),
+                    points=s.get("points", []),
+                ))
+            except Exception:
+                continue
+
+        labels: list[LabelDef] = []
+        for lb in entry.labels:
+            try:
+                labels.append(LabelDef(
+                    text=str(lb.get("text", "")),
+                    side=str(lb.get("side", "top")),
+                    order=int(lb.get("order", 0)),
+                    default_value=str(lb.get("default_value", "")),
+                    dx=float(lb.get("dx", 0.0)),
+                    dy=float(lb.get("dy", 0.0)),
+                    dx_v=float(lb.get("dx_v", 0.0)),
+                    dy_v=float(lb.get("dy_v", 0.0)),
+                    font_family=str(lb.get("font_family", "")),
+                    font_size=int(lb.get("font_size", 0)),
+                    bold=bool(lb.get("bold", False)),
+                    italic=bool(lb.get("italic", False)),
+                    color=str(lb.get("color", "")),
+                    alignment=str(lb.get("alignment", "left")),
+                    use_offset=bool(lb.get("use_offset", False)),
+                ))
+            except Exception:
+                continue
+
+        udef = UserCompDef(
+            type_name=entry.type_name,
+            display_name=entry.display_name,
+            category=entry.category,
+            description=entry.description,
+            ref_prefix=entry.ref_prefix,
+            default_value=entry.default_value,
+            pins=pins,
+            symbol=symbol,
+            ref_label_offset=entry.ref_label_offset,
+            val_label_offset=entry.val_label_offset,
+            ref_label_offset_v=entry.ref_label_offset_v,
+            val_label_offset_v=entry.val_label_offset_v,
+            ref_label_style=entry.ref_label_style,
+            val_label_style=entry.val_label_style,
+            labels=labels,
+            is_virtual=entry.is_virtual,
+        )
+        return UserComponentItem(udef, ref=ref, value=value,
+                                 params=params or {}, comp_id=comp_id,
+                                 library_id=found_lib_id)
+    except Exception:
         return None
-    return cls(ref=ref, value=value, params=params or {}, comp_id=comp_id)
 
 
 class _SnapshotCommand(QUndoCommand):
@@ -461,17 +458,32 @@ class CircuitScene(QGraphicsScene):
 
         # Issue 5: right-click in SELECT mode resets annotation tool
         if event.button() == Qt.MouseButton.RightButton:
-            it = self.itemAt(pos, self.views()[0].transform() if self.views() else QTransform())
-            if (
-                it is not None
-                and bool(it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-                and not it.isSelected()
-            ):
+            target = self._selectable_item_at(pos)
+            if target is not None:
                 self.clearSelection()
-                it.setSelected(True)
+                target.setSelected(True)
             self.annotation_tool_reset.emit()
 
         super().mousePressEvent(event)
+
+    def _selectable_item_at(self, pos: QPointF) -> QGraphicsItem | None:
+        """Return the nearest selectable item under *pos*.
+
+        Right-click context operations should highlight the same logical target
+        as a left click:
+        - If a child graphics item is hit (e.g. pin marker), walk up to the
+          nearest selectable ancestor.
+        - For labels, this naturally selects the label itself only when label
+          dragging is enabled; otherwise label items are not selectable and the
+          walk continues to the parent component.
+        """
+        view_transform = self.views()[0].transform() if self.views() else QTransform()
+        item = self.itemAt(pos, view_transform)
+        while item is not None:
+            if bool(item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable):
+                return item
+            item = item.parentItem()
+        return None
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         pos = event.scenePos()
@@ -873,138 +885,130 @@ class CircuitScene(QGraphicsScene):
             self._align_indicator = None
 
     # ------------------------------------------------------------------
-    # Auto-wire rebuild (Problem 1 + 2)
+    # Auto-wire rebuild (full refactor)
     # ------------------------------------------------------------------
 
     def _rebuild_auto_wires(self) -> None:
-        """Remove all existing auto-wires and regenerate from scratch.
+        """Regenerate auto wires from normalized pin endpoints.
 
-        Called after any component add / delete / move / rotate / flip so
-        wires always reflect the current layout.
+        Strategy:
+        1) Build normalized pin endpoints (`_AutoPin`) for all components.
+        2) Group pins by exact alignment axis (same y for horizontal, same x for vertical).
+        3) On each line, only connect adjacent facing pins.
+           This avoids long-distance/tunnelling matches and keeps wiring stable.
+        4) Validate each candidate with obstacle/path checks before creating wire.
         """
-        # Remove all WireItems from scene and circuit
         for item in list(self.items()):
             if isinstance(item, WireItem):
                 self.removeItem(item)
         self.circuit.wires.clear()
         self.circuit._wire_index.clear()
 
-        # Gather all component items currently in the scene
-        comp_items: list[ComponentItem] = [
-            it for it in self.items()
-            if isinstance(it, ComponentItem)
-        ]
+        pins = self._collect_auto_pins()
+        if not pins:
+            return
 
-        # Check every ordered pair (avoid double-drawing)
+        horiz: dict[int, list[_AutoPin]] = {}
+        vert: dict[int, list[_AutoPin]] = {}
+        for p in pins:
+            if p.axis == "h":
+                horiz.setdefault(self._qkey(p.pos.y()), []).append(p)
+            else:
+                vert.setdefault(self._qkey(p.pos.x()), []).append(p)
+
         seen: set[tuple[str, str, str, str]] = set()
-        for i, item_a in enumerate(comp_items):
-            for item_b in comp_items[i + 1:]:
-                for pin_a, pin in item_a._pins.items():
-                    sp_a = item_a.mapToScene(pin.pos())
-                    for pin_b, pin2 in item_b._pins.items():
-                        sp_b = item_b.mapToScene(pin2.pos())
-                        self._try_auto_wire_pair(
-                            item_a, pin_a, sp_a,
-                            item_b, pin_b, sp_b,
-                            seen,
-                        )
+        for group in horiz.values():
+            group.sort(key=lambda p: p.pos.x())
+            self._connect_adjacent_pins(group, axis="h", seen=seen)
+        for group in vert.values():
+            group.sort(key=lambda p: p.pos.y())
+            self._connect_adjacent_pins(group, axis="v", seen=seen)
 
-    def _try_auto_wire_pair(
+    def _collect_auto_pins(self) -> list[_AutoPin]:
+        pins: list[_AutoPin] = []
+        for item in self.items():
+            if not isinstance(item, ComponentItem) or item is self._ghost:
+                continue
+            csp = item.scenePos()
+            for pin_name, pin in item._pins.items():
+                sp = item.mapToScene(pin.pos())
+                dx = sp.x() - csp.x()
+                dy = sp.y() - csp.y()
+                if abs(dx) >= abs(dy):
+                    pins.append(_AutoPin(
+                        comp=item,
+                        comp_id=item.component_id,
+                        pin_name=pin_name,
+                        pos=sp,
+                        axis="h",
+                        direction=1 if dx >= 0 else -1,
+                    ))
+                else:
+                    pins.append(_AutoPin(
+                        comp=item,
+                        comp_id=item.component_id,
+                        pin_name=pin_name,
+                        pos=sp,
+                        axis="v",
+                        direction=1 if dy >= 0 else -1,
+                    ))
+        return pins
+
+    @staticmethod
+    def _qkey(v: float, step: float = _COORD_EPSILON) -> int:
+        return int(round(v / step))
+
+    def _connect_adjacent_pins(
         self,
-        item_a: ComponentItem,
-        pin_a: str,
-        sp_a: QPointF,
-        item_b: ComponentItem,
-        pin_b: str,
-        sp_b: QPointF,
+        pins: list[_AutoPin],
+        axis: str,
         seen: set[tuple[str, str, str, str]],
     ) -> None:
-        """Attempt to draw a wire between two specific pins on two components."""
-        dx = abs(sp_b.x() - sp_a.x())
-        dy = abs(sp_b.y() - sp_a.y())
+        for a, b in zip(pins, pins[1:]):
+            if a.comp_id == b.comp_id:
+                continue
+            if axis == "h":
+                # Left pin must face right, right pin must face left.
+                if not (a.direction == 1 and b.direction == -1):
+                    continue
+            else:
+                # Top pin must face down, bottom pin must face up.
+                if not (a.direction == 1 and b.direction == -1):
+                    continue
 
-        is_h_aligned = dy < _COORD_EPSILON and dx > _COORD_EPSILON
-        is_v_aligned = dx < _COORD_EPSILON and dy > _COORD_EPSILON
-        if not is_h_aligned and not is_v_aligned:
-            return
+            key = tuple(sorted([(a.comp_id, a.pin_name), (b.comp_id, b.pin_name)]))
+            flat = (key[0][0], key[0][1], key[1][0], key[1][1])
+            if flat in seen:
+                continue
+            seen.add(flat)
 
-        # Enforce direction compatibility:
-        # horizontal alignment → both pins must face horizontally
-        # vertical alignment   → both pins must face vertically
-        h_a = self._pin_is_horizontal(item_a, sp_a)
-        h_b = self._pin_is_horizontal(item_b, sp_b)
-        if is_h_aligned and (not h_a or not h_b):
-            return
-        if is_v_aligned and (h_a or h_b):
-            return
+            endpoint_items = {a.comp: [a.pos], b.comp: [b.pos]}
+            if not self._is_path_clear(a.pos, b.pos, endpoint_items=endpoint_items):
+                continue
 
-        # Ensure the two pins face each other rather than "through" a component.
-        # This prevents accidental connections from one component side to the
-        # opposite side of another component.
-        sign_a = self._pin_direction_sign(item_a, sp_a)
-        sign_b = self._pin_direction_sign(item_b, sp_b)
-        if is_h_aligned:
-            need_a = 1 if sp_b.x() > sp_a.x() else -1
-            need_b = -need_a
-        else:
-            need_a = 1 if sp_b.y() > sp_a.y() else -1
-            need_b = -need_a
-        if sign_a != need_a or sign_b != need_b:
-            return
+            self._add_auto_wire(
+                a.pos, b.pos,
+                (a.comp_id, a.pin_name),
+                (b.comp_id, b.pin_name),
+            )
 
-        # Avoid duplicate wires
-        key = tuple(sorted([(item_a.component_id, pin_a),
-                             (item_b.component_id, pin_b)]))
-        flat = (key[0][0], key[0][1], key[1][0], key[1][1])
-        if flat in seen:
-            return
-        seen.add(flat)
-
-        # Bug 3: exclude the two endpoint components themselves from path check
-        if not self._is_path_clear(sp_a, sp_b, exclude={item_a, item_b}):
-            return
-
-        self._add_auto_wire(
-            sp_a, sp_b,
-            (item_a.component_id, pin_a),
-            (item_b.component_id, pin_b),
-        )
-
-    def _pin_is_horizontal(self, item: ComponentItem,
-                           pin_sp: QPointF) -> bool:
-        """Return True if this pin faces horizontally (|dx| >= |dy| from item centre)."""
-        comp_sp = item.scenePos()
-        dx = abs(pin_sp.x() - comp_sp.x())
-        dy = abs(pin_sp.y() - comp_sp.y())
-        return dx >= dy
-
-    def _pin_direction_sign(self, item: ComponentItem, pin_sp: QPointF) -> int:
-        """Return principal outward direction sign for a pin.
-
-        Horizontal pins return +1 (right) or -1 (left); vertical pins return
-        +1 (down) or -1 (up).
-        """
-        comp_sp = item.scenePos()
-        dx = pin_sp.x() - comp_sp.x()
-        dy = pin_sp.y() - comp_sp.y()
-        if abs(dx) >= abs(dy):
-            return 1 if dx >= 0 else -1
-        return 1 if dy >= 0 else -1
-
-    def _is_path_clear(self, p1: QPointF, p2: QPointF,
-                       exclude: "set[ComponentItem] | None" = None) -> bool:
+    def _is_path_clear(
+        self,
+        p1: QPointF,
+        p2: QPointF,
+        endpoint_items: "dict[ComponentItem, list[QPointF]] | None" = None,
+    ) -> bool:
         """Return True if the straight line from p1 to p2 is unobstructed.
 
-        Components in *exclude* (typically the two endpoint components) are
-        never counted as obstacles so that direct pin-to-pin connections work
-        even when the component body slightly overlaps the wire path.
-        The endpoints are shrunk inward so that the endpoint component bodies
-        do not false-trigger (the shrink margin exceeds the bounding-rect
-        padding used by all built-in symbols).
+        Endpoint components are treated as obstacles too, except for a small
+        clearance near the exact endpoint pin location. This prevents wires
+        from tunnelling through a component body to its opposite-side pin.
         """
         shrink = 8.0
         tol = 4.0
-        if abs(p1.y() - p2.y()) < _COORD_EPSILON:
+        endpoint_margin = 10.0
+        is_horizontal = abs(p1.y() - p2.y()) < _COORD_EPSILON
+        if is_horizontal:
             # Horizontal wire
             x1 = min(p1.x(), p2.x()) + shrink
             x2 = max(p1.x(), p2.x()) - shrink
@@ -1021,8 +1025,46 @@ class CircuitScene(QGraphicsScene):
 
         for item in self.items(check_rect):
             if isinstance(item, ComponentItem):
-                if exclude and item in exclude:
-                    continue
+                if endpoint_items and item in endpoint_items:
+                    br = item.mapToScene(item.boundingRect()).boundingRect()
+                    if is_horizontal:
+                        ox1 = max(check_rect.left(), br.left())
+                        ox2 = min(check_rect.right(), br.right())
+                        if ox2 <= ox1:
+                            continue
+                        can_ignore = False
+                        for ep in endpoint_items[item]:
+                            if abs(ep.y() - p1.y()) > tol:
+                                continue
+                            if ep.x() <= (br.left() + br.right()) / 2.0:
+                                if ox2 <= ep.x() + endpoint_margin:
+                                    can_ignore = True
+                            else:
+                                if ox1 >= ep.x() - endpoint_margin:
+                                    can_ignore = True
+                            if can_ignore:
+                                break
+                        if can_ignore:
+                            continue
+                    else:
+                        oy1 = max(check_rect.top(), br.top())
+                        oy2 = min(check_rect.bottom(), br.bottom())
+                        if oy2 <= oy1:
+                            continue
+                        can_ignore = False
+                        for ep in endpoint_items[item]:
+                            if abs(ep.x() - p1.x()) > tol:
+                                continue
+                            if ep.y() <= (br.top() + br.bottom()) / 2.0:
+                                if oy2 <= ep.y() + endpoint_margin:
+                                    can_ignore = True
+                            else:
+                                if oy1 >= ep.y() - endpoint_margin:
+                                    can_ignore = True
+                            if can_ignore:
+                                break
+                        if can_ignore:
+                            continue
                 return False
         return True
 

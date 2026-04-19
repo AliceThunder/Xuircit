@@ -1,27 +1,7 @@
-"""Unified component library system.
+"""User-owned component library system.
 
-All component definitions – both built-in (preset) and user-defined – are
-managed here through a single ``LibraryManager`` singleton.  Multiple named
-libraries are supported; each is persisted as a JSON file under
-``~/.xuircit/libraries/``.
-
-Library structure
------------------
-Every library is a :class:`CompLibrary` with a stable ``library_id``, a
-human-readable ``name``, and a collection of :class:`LibEntry` objects.
-
-``LibEntry`` is the unified component descriptor:
-* ``is_builtin = True`` → the type is rendered by a registered
-  :class:`~components.base.ComponentItem` subclass (the classic built-in
-  symbols like ResistorItem).
-* ``is_builtin = False`` → the type uses a custom symbol built from
-  ``pins`` / ``symbol`` lists (user-drawn components).
-
-Component lookup
-----------------
-The *full key* of a component is ``(library_id, type_name)``.  When a
-library is not specified, ``LibraryManager.find_entry`` searches all
-libraries in order (preset first).
+All component definitions are created and managed by users.  There is no
+preset library and no preset symbol fallback.
 """
 from __future__ import annotations
 
@@ -32,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 _LIBRARIES_DIR = Path.home() / ".xuircit" / "libraries"
-PRESET_LIBRARY_ID = "preset"
+LIBRARY_SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +21,7 @@ PRESET_LIBRARY_ID = "preset"
 
 @dataclass
 class LibEntry:
-    """Unified component entry – works for both built-in and user-defined."""
+    """User-defined component entry."""
 
     type_name: str
     display_name: str
@@ -50,14 +30,10 @@ class LibEntry:
     ref_prefix: str = "X"
     default_value: str = ""
     default_params: dict[str, Any] = field(default_factory=dict)
-    # For built-in types: simple pin names (ordering matches the renderer)
-    pin_names: list[str] = field(default_factory=list)
-    # For user-defined types: full pin definitions [{name, x, y}, ...]
+    # Full pin definitions [{name, x, y}, ...]
     pins: list[dict[str, Any]] = field(default_factory=list)
-    # User-defined drawing commands [{kind, x1, y1, x2, y2, w, h, text}, ...]
+    # Drawing commands [{kind, x1, y1, x2, y2, w, h, text}, ...]
     symbol: list[dict[str, Any]] = field(default_factory=list)
-    # True ⟹ rendered by a registered ComponentItem subclass
-    is_builtin: bool = True
     ref_label_offset: list[float] = field(default_factory=lambda: [0.0, -22.0])
     val_label_offset: list[float] = field(default_factory=lambda: [0.0, 14.0])
     # Feature 8: vertical (rotated) perspective offsets
@@ -73,7 +49,11 @@ class LibEntry:
     is_virtual: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # Legacy fields are intentionally not persisted anymore.
+        d.pop("pin_names", None)
+        d.pop("is_builtin", None)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "LibEntry":
@@ -85,10 +65,8 @@ class LibEntry:
             ref_prefix=d.get("ref_prefix", "X"),
             default_value=d.get("default_value", ""),
             default_params=d.get("default_params", {}),
-            pin_names=d.get("pin_names", []),
             pins=d.get("pins", []),
             symbol=d.get("symbol", []),
-            is_builtin=d.get("is_builtin", True),
             ref_label_offset=d.get("ref_label_offset", [0.0, -22.0]),
             val_label_offset=d.get("val_label_offset", [0.0, 14.0]),
             ref_label_offset_v=d.get("ref_label_offset_v", []),
@@ -107,11 +85,10 @@ class LibEntry:
 class CompLibrary:
     """A named collection of component entries."""
 
-    def __init__(self, library_id: str, name: str,
-                 is_preset: bool = False) -> None:
+    def __init__(self, library_id: str, name: str) -> None:
         self.library_id = library_id
         self.name = name
-        self.is_preset = is_preset
+        self.schema_version = LIBRARY_SCHEMA_VERSION
         self._entries: dict[str, LibEntry] = {}
 
     # ---- access ----
@@ -142,9 +119,9 @@ class CompLibrary:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "library_id": self.library_id,
             "name": self.name,
-            "is_preset": self.is_preset,
             "components": [e.to_dict() for e in self._entries.values()],
         }
 
@@ -153,8 +130,8 @@ class CompLibrary:
         lib = cls(
             library_id=d["library_id"],
             name=d["name"],
-            is_preset=d.get("is_preset", False),
         )
+        lib.schema_version = int(d.get("schema_version", 1))
         for cd in d.get("components", []):
             lib.add(LibEntry.from_dict(cd))
         return lib
@@ -182,20 +159,11 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def _init(self) -> None:
-        """Load all user-defined libraries.
-
-        The preset library has been removed — all components are built by users.
-        Legacy project files that reference built-in type names (R, C, L, …)
-        will still render correctly because the renderer registry in scene.py
-        is kept for backward compatibility.
-        """
+        """Load all user-defined libraries."""
         self._libraries = []
 
-        # Load user libraries
         if _LIBRARIES_DIR.exists():
             for path in sorted(_LIBRARIES_DIR.glob("*.json")):
-                if path.stem == PRESET_LIBRARY_ID:
-                    continue
                 try:
                     with open(path, encoding="utf-8") as fh:
                         data = json.load(fh)
@@ -203,48 +171,6 @@ class LibraryManager:
                     self._libraries.append(lib)
                 except Exception:
                     pass
-
-        # Migrate legacy user_components.json if present and no user libs yet
-        self._migrate_legacy()
-
-    def _migrate_legacy(self) -> None:
-        """One-time migration of ~/.xuircit/user_components.json."""
-        legacy = Path.home() / ".xuircit" / "user_components.json"
-        if not legacy.exists():
-            return
-        # Only migrate if no user (non-preset) library exists yet
-        user_libs = [lb for lb in self._libraries if not lb.is_preset]
-        if user_libs:
-            return
-        try:
-            with open(legacy, encoding="utf-8") as fh:
-                data = json.load(fh)
-            comps = data.get("components", [])
-            if not comps:
-                return
-            ulib = CompLibrary(str(uuid.uuid4()), "User Library")
-            for cd in comps:
-                entry = LibEntry(
-                    type_name=cd["type_name"],
-                    display_name=cd.get("display_name", cd["type_name"]),
-                    category=cd.get("category", "User"),
-                    description=cd.get("description", ""),
-                    ref_prefix=cd.get("ref_prefix", "U"),
-                    default_value=cd.get("default_value", ""),
-                    pin_names=[],
-                    pins=cd.get("pins", []),
-                    symbol=cd.get("symbol", []),
-                    is_builtin=False,
-                    ref_label_offset=cd.get("ref_label_offset", [0.0, -22.0]),
-                    val_label_offset=cd.get("val_label_offset", [0.0, 14.0]),
-                )
-                ulib.add(entry)
-            self._libraries.append(ulib)
-            self._save_library(ulib)
-            # Rename the legacy file so it is not re-imported
-            legacy.rename(legacy.with_suffix(".json.migrated"))
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
     # Access
@@ -264,8 +190,7 @@ class LibraryManager:
     ) -> tuple[LibEntry, str] | None:
         """Return (entry, library_id) or None.
 
-        If *library_id* is given, that library is searched first.
-        Falls back to searching all libraries in order.
+        If *library_id* is provided, lookup is strict in that library.
         """
         if library_id:
             lib = self.get_library(library_id)
@@ -273,6 +198,7 @@ class LibraryManager:
                 entry = lib.get(type_name)
                 if entry:
                     return entry, library_id
+            return None
         for lib in self._libraries:
             entry = lib.get(type_name)
             if entry:
@@ -284,7 +210,7 @@ class LibraryManager:
     # ------------------------------------------------------------------
 
     def add_library(self, name: str) -> CompLibrary:
-        lib = CompLibrary(str(uuid.uuid4()), name, is_preset=False)
+        lib = CompLibrary(str(uuid.uuid4()), name)
         self._libraries.append(lib)
         self._save_library(lib)
         return lib

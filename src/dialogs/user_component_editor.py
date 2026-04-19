@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..models.user_library import LabelDef, PinDef, SymbolCmd, UserCompDef
-from ..models.library_system import LibEntry, LibraryManager, PRESET_LIBRARY_ID
+from ..models.library_system import LibEntry, LibraryManager
 from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
 from ..components.wire import _qt_style as _wire_qt_style
 
@@ -1087,7 +1087,7 @@ class UserComponentEditorDialog(QDialog):
         )
         self.resize(1000, 700)
         self._existing = existing
-        self._library_id = library_id or PRESET_LIBRARY_ID
+        self._library_id = library_id or ""
 
         # ── root layout ──────────────────────────────────────────────
         root = QHBoxLayout(self)
@@ -1403,37 +1403,32 @@ class UserComponentEditorDialog(QDialog):
             val_align = val_style.get("alignment", "left")
             self._val_align_combo.setCurrentIndex(
                 max(0, self._val_align_combo.findText(val_align)))
-            if not existing.is_builtin:
-                # Load custom symbol only for user-defined entries
-                _sym_udef = UserCompDef(
-                    type_name=existing.type_name,
-                    display_name=existing.display_name,
-                    category=existing.category,
-                    description=existing.description,
-                    ref_prefix=existing.ref_prefix,
-                    default_value=existing.default_value,
-                    pins=[PinDef(**p) for p in existing.pins],
-                    symbol=[
-                        SymbolCmd(
-                            kind=s.get("kind", "line") if isinstance(s, dict) else s.kind,
-                            x1=s.get("x1", 0.0) if isinstance(s, dict) else s.x1,
-                            y1=s.get("y1", 0.0) if isinstance(s, dict) else s.y1,
-                            x2=s.get("x2", 0.0) if isinstance(s, dict) else s.x2,
-                            y2=s.get("y2", 0.0) if isinstance(s, dict) else s.y2,
-                            w=s.get("w", 0.0) if isinstance(s, dict) else s.w,
-                            h=s.get("h", 0.0) if isinstance(s, dict) else s.h,
-                            text=s.get("text", "") if isinstance(s, dict) else s.text,
-                            filled=s.get("filled", False) if isinstance(s, dict) else s.filled,
-                            # Bug 2 fix: include points so polylines are preserved on re-edit
-                            points=s.get("points", []) if isinstance(s, dict) else s.points,
-                        )
-                        for s in existing.symbol
-                    ],
-                )
-                self._sym_scene.load_def(_sym_udef)
-            else:
-                # Issue 1: For built-in components, show actual rendered preview
-                self._load_builtin_preview(existing)
+            _sym_udef = UserCompDef(
+                type_name=existing.type_name,
+                display_name=existing.display_name,
+                category=existing.category,
+                description=existing.description,
+                ref_prefix=existing.ref_prefix,
+                default_value=existing.default_value,
+                pins=[PinDef(**p) for p in existing.pins],
+                symbol=[
+                    SymbolCmd(
+                        kind=s.get("kind", "line") if isinstance(s, dict) else s.kind,
+                        x1=s.get("x1", 0.0) if isinstance(s, dict) else s.x1,
+                        y1=s.get("y1", 0.0) if isinstance(s, dict) else s.y1,
+                        x2=s.get("x2", 0.0) if isinstance(s, dict) else s.x2,
+                        y2=s.get("y2", 0.0) if isinstance(s, dict) else s.y2,
+                        w=s.get("w", 0.0) if isinstance(s, dict) else s.w,
+                        h=s.get("h", 0.0) if isinstance(s, dict) else s.h,
+                        text=s.get("text", "") if isinstance(s, dict) else s.text,
+                        filled=s.get("filled", False) if isinstance(s, dict) else s.filled,
+                        # Bug 2 fix: include points so polylines are preserved on re-edit
+                        points=s.get("points", []) if isinstance(s, dict) else s.points,
+                    )
+                    for s in existing.symbol
+                ],
+            )
+            self._sym_scene.load_def(_sym_udef)
             # Populate existing extra properties
             for lbl_dict in existing.labels:
                 if isinstance(lbl_dict, dict):
@@ -1610,36 +1605,6 @@ class UserComponentEditorDialog(QDialog):
             self._val_dx_spin.blockSignals(False)
             self._val_dy_spin.blockSignals(False)
 
-    # ------------------------------------------------------------------
-    # Issue 1: built-in component preview
-    # ------------------------------------------------------------------
-        """Show the actual rendered component in the symbol scene (read-only)."""
-        try:
-            from ..canvas.scene import create_component_item
-            item = create_component_item(
-                entry.type_name,
-                ref=entry.ref_prefix + "?",
-                value=entry.default_value,
-                library_id=PRESET_LIBRARY_ID,
-            )
-            if item is None:
-                return
-            # Make the preview non-interactive
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, False)
-            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-            item.setOpacity(0.85)
-            self._sym_scene.addItem(item)
-            # Bug #9: show connection points (pins) in the preview
-            item.show_pins(True)
-            # Centre the view on the item
-            self._sym_view.centerOn(item)
-        except Exception:
-            pass  # preview is best-effort
-
-    # ------------------------------------------------------------------
-
     def _refresh_pin_list(self) -> None:
         self._pin_list.clear()
         for marker in self._sym_scene.pins:
@@ -1741,11 +1706,6 @@ class UserComponentEditorDialog(QDialog):
                 "y": marker.pos().y(),
             })
 
-        # Preserve is_builtin if editing a built-in component (only meta changes)
-        is_builtin = False
-        if self._existing is not None:
-            is_builtin = self._existing.is_builtin
-
         # Issue 12: include all LabelDef fields in label serialisation
         # Feature 6: include dx/dy offsets and use_offset
         # Feature 7: include style fields
@@ -1778,10 +1738,8 @@ class UserComponentEditorDialog(QDialog):
             description=self._desc_edit.text().strip(),
             ref_prefix=self._prefix_edit.text().strip() or "U",
             default_value=self._value_edit.text().strip(),
-            pin_names=[p["name"] for p in pins_pos] if is_builtin else [],
-            pins=pins_pos if not is_builtin else [],
-            symbol=[s.__dict__ for s in self._sym_scene.sym_cmds] if not is_builtin else [],
-            is_builtin=is_builtin,
+            pins=pins_pos,
+            symbol=[s.__dict__ for s in self._sym_scene.sym_cmds],
             labels=labels_data,
             # Fix 3: virtual flag
             is_virtual=self._virtual_cb.isChecked(),
@@ -1819,6 +1777,9 @@ class UserComponentEditorDialog(QDialog):
         )
 
         lm = LibraryManager()
+        if not self._library_id:
+            QMessageBox.warning(self, "Validation", "Please select a target library.")
+            return
         # Issue 5: if the type_name was changed during edit, delete the old entry
         # first so we don't leave a stale entry in the library.
         if (self._existing is not None
@@ -1941,7 +1902,7 @@ class _LabelEditDialog(QDialog):
 
 class LibraryManagerDialog(QDialog):
     """Manage all component libraries: add/remove libraries, add/edit/delete
-    components within any library (including the preset library).
+    components within any library.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -2013,8 +1974,7 @@ class LibraryManagerDialog(QDialog):
     def _refresh_libs(self) -> None:
         self._lib_list.clear()
         lm = LibraryManager()
-        # Fix 2: Only show user libraries (not the preset library which is read-only)
-        self._libs = [lib for lib in lm.all_libraries() if not lib.is_preset]
+        self._libs = lm.all_libraries()
         for lib in self._libs:
             self._lib_list.addItem(lib.name)
         if self._libs:
@@ -2127,8 +2087,7 @@ class LibraryManagerDialog(QDialog):
             return
         self._entries = lib.all()
         for e in self._entries:
-            tag = " [built-in]" if e.is_builtin else ""
-            self._comp_list.addItem(f"{e.display_name}  [{e.type_name}]{tag}")
+            self._comp_list.addItem(f"{e.display_name}  [{e.type_name}]")
 
     def _new_component(self) -> None:
         lib = self._current_lib()
