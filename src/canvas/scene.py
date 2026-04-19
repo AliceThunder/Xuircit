@@ -664,7 +664,7 @@ class CircuitScene(QGraphicsScene):
         from ..canvas.annotation import TextAnnotationItem, _TextAnnotationDialog
         dlg = _TextAnnotationDialog(color=self._anno_color)
         if dlg.exec():
-            text = dlg.text()
+            text = dlg.html()
             if text:
                 before = self._take_snapshot()
                 item = TextAnnotationItem(
