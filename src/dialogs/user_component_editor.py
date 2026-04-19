@@ -169,7 +169,7 @@ class _SymbolScene(QGraphicsScene):
             idx = self._sym_items.index(it)
             cmd = self.sym_cmds[idx]
             cmd.line_style = style_name
-            cmd.line_width = width
+            cmd.line_width = self._line_width
             it.setPen(self._draw_pen())
         self._push_undo("Set Line Style", before, self._snapshot())
 
