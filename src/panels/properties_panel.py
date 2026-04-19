@@ -313,32 +313,51 @@ class PropertiesPanel(QDockWidget):
         if not isinstance(self._current_item, (AnnotationItem, TextAnnotationItem)):
             return
         item = self._current_item
+        scene = item.scene() if callable(getattr(item, "scene", None)) else None
+        before = None
+        if scene is not None and hasattr(scene, "_take_snapshot") and \
+                hasattr(scene, "undo_stack") and scene.undo_stack is not None:
+            before = scene._take_snapshot()
+
         color = QColorDialog.getColor(QColor(item.anno_color), self, "Set Color")
-        if color.isValid():
-            item.anno_color = color.name()
-            if isinstance(item, AnnotationItem):
-                item._rebuild_path()
-            else:
-                item.setDefaultTextColor(color)
-            self._anno_color_btn.setStyleSheet(
-                f"background-color: {color.name()}; border: 1px solid #888;"
-            )
+        if not color.isValid():
+            return
+
+        new_color = color.name()
+        if new_color == item.anno_color:
+            return
+
+        item.anno_color = new_color
+        if isinstance(item, AnnotationItem):
+            item._rebuild_path()
+        else:
+            item.setDefaultTextColor(color)
+        self._anno_color_btn.setStyleSheet(
+            f"background-color: {new_color}; border: 1px solid #888;"
+        )
+
+        if before is not None and scene is not None and \
+                hasattr(scene, "_push_undo") and hasattr(scene, "_take_snapshot"):
+            after = scene._take_snapshot()
+            scene._push_undo("Edit Annotation Properties", before, after)
 
     def _apply_annotation(self) -> None:
         from ..canvas.annotation import AnnotationItem, TextAnnotationItem
         if not isinstance(self._current_item, (AnnotationItem, TextAnnotationItem)):
             return
         item = self._current_item
+        # TextAnnotationItem has no editable line/fill properties — nothing to apply.
+        if not isinstance(item, AnnotationItem):
+            return
         scene = item.scene() if callable(getattr(item, "scene", None)) else None
         before = None
         if scene is not None and hasattr(scene, "_take_snapshot") and \
                 hasattr(scene, "undo_stack") and scene.undo_stack is not None:
             before = scene._take_snapshot()
-        if isinstance(item, AnnotationItem):
-            item.line_style = self._anno_line_style.currentText()
-            item.line_width = float(self._anno_line_width.value())
-            item.fill = self._anno_fill_cb.isChecked()
-            item._rebuild_path()
+        item.line_style = self._anno_line_style.currentText()
+        item.line_width = float(self._anno_line_width.value())
+        item.fill = self._anno_fill_cb.isChecked()
+        item._rebuild_path()
         if before is not None and scene is not None and \
                 hasattr(scene, "_push_undo") and hasattr(scene, "_take_snapshot"):
             after = scene._take_snapshot()
