@@ -29,6 +29,7 @@ valid SPICE netlist.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -54,9 +55,54 @@ _VIRTUAL_TYPES: frozenset[str] = frozenset({
     "GND", "NETLABEL", "JUNCTION", "ELBOW", "TEE",
 })
 
-# Issue 9: default colors — omit from JSON metadata when values match defaults
-_DEFAULT_COMPONENT_COLOR: str = "#111111"
-_DEFAULT_LABEL_COLOR: str = "#333333"
+# Issue 9: default colors — omit from JSON metadata when values match defaults.
+# Prefer the rendering-layer definitions to avoid drift, but keep the current
+# literals as a compatibility fallback when those modules are unavailable.
+_FALLBACK_DEFAULT_COMPONENT_COLOR: str = "#111111"
+_FALLBACK_DEFAULT_LABEL_COLOR: str = "#333333"
+
+
+def _resolve_default_color(
+    module_names: tuple[str, ...],
+    attribute_names: tuple[str, ...],
+    fallback: str,
+) -> str:
+    """Resolve a default color from one of several modules/attributes.
+
+    This keeps XCIT serialization aligned with the rendering-layer defaults
+    without making the serializer fail if those UI modules are unavailable.
+    """
+    for module_name in module_names:
+        try:
+            module = importlib.import_module(module_name, package=__package__)
+        except Exception:
+            continue
+        for attribute_name in attribute_names:
+            value = getattr(module, attribute_name, None)
+            if isinstance(value, str) and value:
+                return value
+    return fallback
+
+
+_DEFAULT_COMPONENT_COLOR: str = _resolve_default_color(
+    ("..components.base",),
+    ("_DEFAULT_COMPONENT_COLOR", "DEFAULT_COMPONENT_COLOR"),
+    _FALLBACK_DEFAULT_COMPONENT_COLOR,
+)
+_DEFAULT_LABEL_COLOR: str = _resolve_default_color(
+    (
+        "..components.label_item",
+        "..components.label",
+        "..components.base",
+    ),
+    (
+        "_DEFAULT_LABEL_COLOR",
+        "DEFAULT_LABEL_COLOR",
+        "_DEFAULT_COMPONENT_COLOR",
+        "DEFAULT_COMPONENT_COLOR",
+    ),
+    _FALLBACK_DEFAULT_LABEL_COLOR,
+)
 
 _DEFAULT_NODES: dict[str, list[str]] = {
     "R":      ["N001", "N002"],
