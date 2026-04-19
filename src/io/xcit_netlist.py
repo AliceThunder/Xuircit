@@ -212,9 +212,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         pin_names: list[str] = []
         if result is not None:
             entry, _ = result
-            pin_names = entry.pin_names if entry.is_builtin else [
-                p.get("name", "") for p in entry.pins
-            ]
+            pin_names = [p.get("name", "") for p in entry.pins]
 
         node_tokens: list[str] = []
         for pin in pin_names:
@@ -254,7 +252,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         rot = comp.get("rotation", 0)
         fh = 1 if comp.get("flip_h", False) else 0
         fv = 1 if comp.get("flip_v", False) else 0
-        lib_str = lib_id or "preset"
+        lib_str = lib_id or ""
         lrp = comp.get("label_ref_pos", [0.0, -22.0])
         lvp = comp.get("label_val_pos", [0.0, 14.0])
         # Issue 9: include component color and label colors as optional JSON metadata
@@ -294,7 +292,7 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
             rot = comp.get("rotation", 0)
             fh = 1 if comp.get("flip_h", False) else 0
             fv = 1 if comp.get("flip_v", False) else 0
-            lib_id = comp.get("library_id") or "preset"
+            lib_id = comp.get("library_id") or ""
             vmeta: dict[str, Any] = {}
             if comp.get("color") and comp["color"] != _DEFAULT_COMPONENT_COLOR:
                 vmeta["c"] = comp["color"]
@@ -492,7 +490,7 @@ def parse_xcit_netlist(
             vrot = float(parts[4])
             vfh = bool(int(parts[5]))
             vfv = bool(int(parts[6]))
-            vlib = parts[7] if len(parts) > 7 else "preset"
+            vlib = parts[7] if len(parts) > 7 else ""
             # Parse optional JSON metadata (color, etc.)
             vmeta: dict[str, Any] = {}
             vjson_idx = 8
@@ -539,4 +537,3 @@ def _is_float(s: str) -> bool:
         return True
     except ValueError:
         return False
-
