@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsSceneContextMenuEvent,
-    QGraphicsSimpleTextItem,
+    QGraphicsTextItem,
     QMenu,
     QSpinBox,
     QStyleOptionGraphicsItem,
@@ -219,13 +219,15 @@ class AnnotationItem(QGraphicsPathItem):
 
 
 # ---------------------------------------------------------------------------
-# Fix 10: Text annotation item
+# Bug 6: Text annotation item with rich text (HTML) support
 # ---------------------------------------------------------------------------
 
-class TextAnnotationItem(QGraphicsSimpleTextItem):
+class TextAnnotationItem(QGraphicsTextItem):
     """A text annotation placed on the annotation layer.
 
-    Supports full text styling: font family, size, bold, italic, color.
+    Bug 6: Supports HTML rich text (bold, italic, font size, inline color,
+    etc.) via QGraphicsTextItem.  Plain-text annotations from earlier project
+    files are loaded transparently and converted to plain HTML.
     """
 
     def __init__(
@@ -239,8 +241,10 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
         bold: bool = False,
         italic: bool = False,
         anno_id: str | None = None,
+        # Bug 6: is_html=True → text is stored/loaded as HTML; False → plain
+        is_html: bool = False,
     ) -> None:
-        super().__init__(text)
+        super().__init__()
         self.anno_id = anno_id or str(uuid.uuid4())
         self.kind = "text"
         self.anno_color = color
@@ -249,11 +253,18 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
         self.bold = bold
         self.italic = italic
 
-        self.setBrush(QBrush(QColor(color)))
         font = QFont(font_family, font_size)
         font.setBold(bold)
         font.setItalic(italic)
         self.setFont(font)
+        self.setDefaultTextColor(QColor(color))
+
+        # Store and display content
+        if is_html:
+            self.setHtml(text)
+        else:
+            # Wrap plain text in a span so the color is applied uniformly
+            self.setPlainText(text)
 
         self.setPos(x, y)
         self.setZValue(ANNOTATION_Z)
@@ -268,7 +279,7 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         menu = QMenu()
         menu.addAction("Edit…").triggered.connect(self._edit_text)
-        menu.addAction("Set Color…").triggered.connect(self._set_color)
+        menu.addAction("Set Default Color…").triggered.connect(self._set_color)
         menu.addSeparator()
         menu.addAction("Delete").triggered.connect(self._delete_self)
         menu.exec(event.screenPos())
@@ -279,8 +290,8 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
         if scene is not None and hasattr(scene, "_take_snapshot") and \
                 hasattr(scene, "undo_stack") and scene.undo_stack is not None:
             before = scene._take_snapshot()
-        dlg = _TextAnnotationDialog(
-            text=self.text(),
+        dlg = _RichTextAnnotationDialog(
+            html=self.toHtml(),
             color=self.anno_color,
             font_family=self.font_family,
             font_size=self.font_size,
@@ -293,8 +304,8 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
             self.font_size = dlg.font_size()
             self.bold = dlg.bold()
             self.italic = dlg.italic()
-            self.setText(dlg.text())
-            self.setBrush(QBrush(QColor(self.anno_color)))
+            self.setHtml(dlg.html())
+            self.setDefaultTextColor(QColor(self.anno_color))
             font = QFont(self.font_family, self.font_size)
             font.setBold(self.bold)
             font.setItalic(self.italic)
@@ -310,7 +321,7 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
 
     def _set_color(self) -> None:
         color = QColorDialog.getColor(
-            QColor(self.anno_color), None, "Set Text Color"
+            QColor(self.anno_color), None, "Set Default Text Color"
         )
         if color.isValid():
             scene = self.scene()
@@ -319,7 +330,7 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
                     hasattr(scene, "undo_stack") and scene.undo_stack is not None:
                 before = scene._take_snapshot()
             self.anno_color = color.name()
-            self.setBrush(QBrush(QColor(self.anno_color)))
+            self.setDefaultTextColor(QColor(self.anno_color))
             if scene is not None and hasattr(scene, "circuit"):
                 scene.circuit.remove_annotation(self.anno_id)
                 scene.circuit.add_annotation(self.to_dict())
@@ -347,7 +358,9 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
         return {
             "id": self.anno_id,
             "kind": "text",
-            "text": self.text(),
+            # Bug 6: store as HTML so rich text is preserved across save/load
+            "text": self.toHtml(),
+            "is_html": True,
             "x": self.pos().x(),
             "y": self.pos().y(),
             "color": self.anno_color,
@@ -375,19 +388,24 @@ class TextAnnotationItem(QGraphicsSimpleTextItem):
             bold=data.get("bold", False),
             italic=data.get("italic", False),
             anno_id=data.get("id"),
+            is_html=data.get("is_html", False),
         )
 
 
 # ---------------------------------------------------------------------------
-# Fix 10: Text annotation placement dialog
+# Bug 6: Rich text annotation dialog
 # ---------------------------------------------------------------------------
 
-class _TextAnnotationDialog(QDialog):
-    """Dialog for entering text annotation content and style."""
+class _RichTextAnnotationDialog(QDialog):
+    """Dialog for entering/editing a rich-text annotation.
+
+    Features a QTextEdit with a formatting toolbar (bold, italic, color, font
+    size) so the user can apply inline formatting to individual words.
+    """
 
     def __init__(
         self,
-        text: str = "",
+        html: str = "",
         color: str = _DEFAULT_ANNO_COLOR,
         font_family: str = "Sans Serif",
         font_size: int = 12,
@@ -396,47 +414,115 @@ class _TextAnnotationDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Text Annotation")
+        self.setWindowTitle("Text Annotation (Rich Text)")
+        self.resize(520, 380)
         self._color = color
 
-        layout = QFormLayout(self)
+        from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSizePolicy
+        from PyQt6.QtGui import QTextCharFormat, QFont as QF
 
-        from PyQt6.QtWidgets import QLineEdit
-        self._text_edit = QLineEdit(text)
-        self._text_edit.setPlaceholderText("Enter annotation text…")
-        layout.addRow("Text:", self._text_edit)
+        outer = QVBoxLayout(self)
+
+        # ── Formatting toolbar ────────────────────────────────────────
+        fmt_row = QHBoxLayout()
 
         self._font_combo = QFontComboBox()
-        self._font_combo.setCurrentFont(QFont(font_family))
-        layout.addRow("Font:", self._font_combo)
+        self._font_combo.setCurrentFont(QF(font_family))
+        self._font_combo.setMaximumWidth(160)
+        fmt_row.addWidget(self._font_combo)
 
         self._size_spin = QSpinBox()
         self._size_spin.setRange(4, 200)
         self._size_spin.setValue(font_size)
-        layout.addRow("Size:", self._size_spin)
+        self._size_spin.setMaximumWidth(55)
+        fmt_row.addWidget(self._size_spin)
 
-        self._bold_cb = QCheckBox()
-        self._bold_cb.setChecked(bold)
-        layout.addRow("Bold:", self._bold_cb)
+        self._bold_btn = QPushButton("B")
+        self._bold_btn.setCheckable(True)
+        self._bold_btn.setChecked(bold)
+        self._bold_btn.setMaximumWidth(28)
+        self._bold_btn.setStyleSheet("font-weight: bold;")
+        fmt_row.addWidget(self._bold_btn)
 
-        self._italic_cb = QCheckBox()
-        self._italic_cb.setChecked(italic)
-        layout.addRow("Italic:", self._italic_cb)
+        self._italic_btn = QPushButton("I")
+        self._italic_btn.setCheckable(True)
+        self._italic_btn.setChecked(italic)
+        self._italic_btn.setMaximumWidth(28)
+        self._italic_btn.setStyleSheet("font-style: italic;")
+        fmt_row.addWidget(self._italic_btn)
 
-        self._color_btn = _ColorButton(color)
-        layout.addRow("Color:", self._color_btn)
+        self._color_btn = QPushButton("Color…")
+        self._color_btn.setMaximumWidth(60)
+        self._color_btn.setStyleSheet(
+            f"background-color: {color}; border: 1px solid #888;"
+        )
+        self._color_btn.clicked.connect(self._pick_color)
+        fmt_row.addWidget(self._color_btn)
 
+        apply_fmt_btn = QPushButton("Apply to Selection")
+        apply_fmt_btn.clicked.connect(self._apply_format)
+        fmt_row.addWidget(apply_fmt_btn)
+
+        fmt_row.addStretch()
+        outer.addLayout(fmt_row)
+
+        # ── Text editor ───────────────────────────────────────────────
+        self._editor = QTextEdit()
+        self._editor.setAcceptRichText(True)
+        if html and html.strip().startswith("<"):
+            self._editor.setHtml(html)
+        else:
+            self._editor.setPlainText(html)
+        outer.addWidget(self._editor, 1)
+
+        # ── Default font/color note ───────────────────────────────────
+        note = QLabel(
+            "Tip: Select text and click 'Apply to Selection' to apply "
+            "bold/italic/color/size to individual words."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #666; font-size: 10px;")
+        outer.addWidget(note)
+
+        # ── Buttons ───────────────────────────────────────────────────
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        layout.addRow(btns)
+        outer.addWidget(btns)
 
-    def text(self) -> str:
-        from PyQt6.QtWidgets import QLineEdit
-        return self._text_edit.text()
+    def _pick_color(self) -> None:
+        c = QColorDialog.getColor(QColor(self._color), self, "Pick Default Color")
+        if c.isValid():
+            self._color = c.name()
+            self._color_btn.setStyleSheet(
+                f"background-color: {self._color}; border: 1px solid #888;"
+            )
+
+    def _apply_format(self) -> None:
+        """Apply the chosen font/size/bold/italic/color to the selected text."""
+        from PyQt6.QtGui import QTextCharFormat, QFont as QF, QColor as QC
+        fmt = QTextCharFormat()
+        font = QF(self._font_combo.currentFont().family(), self._size_spin.value())
+        font.setBold(self._bold_btn.isChecked())
+        font.setItalic(self._italic_btn.isChecked())
+        fmt.setFont(font)
+        fmt.setForeground(QC(self._color))
+        cursor = self._editor.textCursor()
+        if cursor.hasSelection():
+            cursor.mergeCharFormat(fmt)
+        else:
+            # No selection – apply to whole document
+            self._editor.selectAll()
+            self._editor.textCursor().mergeCharFormat(fmt)
+            cursor = self._editor.textCursor()
+            cursor.clearSelection()
+            self._editor.setTextCursor(cursor)
+
+    def html(self) -> str:
+        return self._editor.toHtml()
 
     def font_family(self) -> str:
         return self._font_combo.currentFont().family()
@@ -445,38 +531,15 @@ class _TextAnnotationDialog(QDialog):
         return self._size_spin.value()
 
     def bold(self) -> bool:
-        return self._bold_cb.isChecked()
+        return self._bold_btn.isChecked()
 
     def italic(self) -> bool:
-        return self._italic_cb.isChecked()
-
-    def color(self) -> str:
-        return self._color_btn.color()
-
-
-class _ColorButton(QWidget):
-    """Simple color-picker button used in dialogs."""
-
-    def __init__(self, color: str = "#cc2222", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        from PyQt6.QtWidgets import QHBoxLayout, QPushButton
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._color = color
-        self._btn = QPushButton("  ")
-        self._btn.setFixedWidth(60)
-        self._btn.setStyleSheet(f"background-color: {color}; border: 1px solid #888;")
-        self._btn.clicked.connect(self._pick)
-        layout.addWidget(self._btn)
-
-    def _pick(self) -> None:
-        c = QColorDialog.getColor(QColor(self._color), self, "Pick Color")
-        if c.isValid():
-            self._color = c.name()
-            self._btn.setStyleSheet(
-                f"background-color: {self._color}; border: 1px solid #888;"
-            )
+        return self._italic_btn.isChecked()
 
     def color(self) -> str:
         return self._color
+
+
+# Keep the old name as an alias for backward compatibility (used by tests).
+_TextAnnotationDialog = _RichTextAnnotationDialog
 

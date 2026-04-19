@@ -107,6 +107,9 @@ class UserCompDef:
     val_label_style: dict = field(default_factory=dict)
     # Extra named labels beyond ref/value (order within a side is preserved).
     labels: list[LabelDef] = field(default_factory=list)
+    # Bug 2: virtual flag — when True, ref/value labels are hidden and
+    # property editing is disabled.
+    is_virtual: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -173,6 +176,7 @@ class UserCompDef:
             ref_label_style=d.get("ref_label_style", {}),
             val_label_style=d.get("val_label_style", {}),
             labels=labels,
+            is_virtual=d.get("is_virtual", False),
         )
 
 

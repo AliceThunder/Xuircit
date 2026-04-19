@@ -17,10 +17,11 @@ from ..components.wire import WireItem
 from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
-# Task 6: Annotation layer snaps to a grid twice as dense as the component layer.
-# GRID_SIZE = 20 px → annotation grid = 10 px.  No grid lines are drawn for the
-# annotation layer; items just snap to this finer resolution.
-_ANNO_GRID_SIZE = GRID_SIZE // 2  # 10 px
+# Bug 8: Annotation layer snaps to a grid twice as dense as the current 10 px,
+# i.e. 5 px.  GRID_SIZE = 20 px → annotation grid = 5 px.
+# No grid lines are drawn for the annotation layer; items just snap to this
+# finer resolution.
+_ANNO_GRID_SIZE = GRID_SIZE // 4  # 5 px
 
 
 def _snap_anno(x: float, y: float) -> tuple[float, float]:
@@ -199,6 +200,7 @@ def create_component_item(
                 ref_label_style=entry.ref_label_style,
                 val_label_style=entry.val_label_style,
                 labels=[LabelDef(**lb) for lb in entry.labels],
+                is_virtual=entry.is_virtual,
             )
             return UserComponentItem(udef, ref=ref, value=value,
                                      params=params or {}, comp_id=comp_id,
@@ -892,8 +894,8 @@ class CircuitScene(QGraphicsScene):
             return
         seen.add(flat)
 
-        # Path must be unobstructed (no exclusions — component bodies block)
-        if not self._is_path_clear(sp_a, sp_b):
+        # Bug 3: exclude the two endpoint components themselves from path check
+        if not self._is_path_clear(sp_a, sp_b, exclude={item_a, item_b}):
             return
 
         self._add_auto_wire(
@@ -910,10 +912,13 @@ class CircuitScene(QGraphicsScene):
         dy = abs(pin_sp.y() - comp_sp.y())
         return dx >= dy
 
-    def _is_path_clear(self, p1: QPointF, p2: QPointF) -> bool:
+    def _is_path_clear(self, p1: QPointF, p2: QPointF,
+                       exclude: "set[ComponentItem] | None" = None) -> bool:
         """Return True if the straight line from p1 to p2 is unobstructed.
 
-        Uses no exclusion list — component bodies are intentional obstacles.
+        Components in *exclude* (typically the two endpoint components) are
+        never counted as obstacles so that direct pin-to-pin connections work
+        even when the component body slightly overlaps the wire path.
         The endpoints are shrunk inward so that the endpoint component bodies
         do not false-trigger (the shrink margin exceeds the bounding-rect
         padding used by all built-in symbols).
@@ -937,6 +942,8 @@ class CircuitScene(QGraphicsScene):
 
         for item in self.items(check_rect):
             if isinstance(item, ComponentItem):
+                if exclude and item in exclude:
+                    continue
                 return False
         return True
 
