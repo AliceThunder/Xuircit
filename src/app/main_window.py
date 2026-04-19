@@ -476,9 +476,9 @@ class MainWindow(QMainWindow):
         self._scene.set_mode(SceneMode.SELECT)
         self._on_annotation_tool_selected("select")
 
-    def _on_place_requested(self, comp_type: str) -> None:
+    def _on_place_requested(self, comp_type: str, library_id: str) -> None:
         self._scene.set_mode(SceneMode.PLACE_COMPONENT)
-        self._scene.set_pending_component(comp_type)
+        self._scene.set_pending_component(comp_type, library_id)
         self._status_mode.setText(f"Mode: PLACE {comp_type}")
         # Bug 2 fix: grab keyboard focus so R/F/V shortcuts reach the scene
         self._view.setFocus(Qt.FocusReason.OtherFocusReason)

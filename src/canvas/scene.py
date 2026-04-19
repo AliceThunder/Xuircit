@@ -257,6 +257,7 @@ class CircuitScene(QGraphicsScene):
         self.circuit = circuit
         self._mode = SceneMode.SELECT
         self._pending_type: str = ""
+        self._pending_library_id: str | None = None
         self._ghost: ComponentItem | None = None
 
         # Wire-drawing state
@@ -323,10 +324,15 @@ class CircuitScene(QGraphicsScene):
     def mode(self) -> SceneMode:
         return self._mode
 
-    def set_pending_component(self, comp_type: str) -> None:
+    def set_pending_component(
+        self, comp_type: str, library_id: str | None = None
+    ) -> None:
         self._pending_type = comp_type
+        self._pending_library_id = library_id
         self._clear_ghost()
-        item = create_component_item(comp_type, ref="?")
+        item = create_component_item(
+            comp_type, ref="?", library_id=self._pending_library_id
+        )
         if item:
             item.setOpacity(0.5)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -522,7 +528,7 @@ class CircuitScene(QGraphicsScene):
     def _place_component(self, pos: QPointF) -> None:
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
-        result = lm.find_entry(self._pending_type)
+        result = lm.find_entry(self._pending_type, self._pending_library_id)
         if result is None:
             return
         entry, library_id = result
@@ -924,6 +930,20 @@ class CircuitScene(QGraphicsScene):
         if is_v_aligned and (h_a or h_b):
             return
 
+        # Ensure the two pins face each other rather than "through" a component.
+        # This prevents accidental connections from one component side to the
+        # opposite side of another component.
+        sign_a = self._pin_direction_sign(item_a, sp_a)
+        sign_b = self._pin_direction_sign(item_b, sp_b)
+        if is_h_aligned:
+            need_a = 1 if sp_b.x() > sp_a.x() else -1
+            need_b = -need_a
+        else:
+            need_a = 1 if sp_b.y() > sp_a.y() else -1
+            need_b = -need_a
+        if sign_a != need_a or sign_b != need_b:
+            return
+
         # Avoid duplicate wires
         key = tuple(sorted([(item_a.component_id, pin_a),
                              (item_b.component_id, pin_b)]))
@@ -949,6 +969,19 @@ class CircuitScene(QGraphicsScene):
         dx = abs(pin_sp.x() - comp_sp.x())
         dy = abs(pin_sp.y() - comp_sp.y())
         return dx >= dy
+
+    def _pin_direction_sign(self, item: ComponentItem, pin_sp: QPointF) -> int:
+        """Return principal outward direction sign for a pin.
+
+        Horizontal pins return +1 (right) or -1 (left); vertical pins return
+        +1 (down) or -1 (up).
+        """
+        comp_sp = item.scenePos()
+        dx = pin_sp.x() - comp_sp.x()
+        dy = pin_sp.y() - comp_sp.y()
+        if abs(dx) >= abs(dy):
+            return 1 if dx >= 0 else -1
+        return 1 if dy >= 0 else -1
 
     def _is_path_clear(self, p1: QPointF, p2: QPointF,
                        exclude: "set[ComponentItem] | None" = None) -> bool:
