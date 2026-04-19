@@ -8,7 +8,7 @@ from enum import Enum, auto
 from typing import Any
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QUndoCommand, QUndoStack
+from PyQt6.QtGui import QBrush, QColor, QPainter, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEvent
 
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
@@ -1181,18 +1181,17 @@ class CircuitScene(QGraphicsScene):
                         lvp = _migrate_label_pos(lvp, rot)
                     item._val_label.setPos(QPointF(lvp[0], lvp[1]))
                 # Issue 9: restore per-instance label colors
-                from PyQt6.QtGui import QBrush as _QBrush, QColor as _QColor
                 lrc = comp.get("label_ref_color")
                 if lrc:
                     try:
-                        item._ref_label.setBrush(_QBrush(_QColor(lrc)))
-                    except Exception:
+                        item._ref_label.setBrush(QBrush(QColor(lrc)))
+                    except (ValueError, RuntimeError):
                         pass
                 lvc = comp.get("label_val_color")
                 if lvc:
                     try:
-                        item._val_label.setBrush(_QBrush(_QColor(lvc)))
-                    except Exception:
+                        item._val_label.setBrush(QBrush(QColor(lvc)))
+                    except (ValueError, RuntimeError):
                         pass
                 self.addItem(item)
 

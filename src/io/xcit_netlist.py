@@ -54,6 +54,10 @@ _VIRTUAL_TYPES: frozenset[str] = frozenset({
     "GND", "NETLABEL", "JUNCTION", "ELBOW", "TEE",
 })
 
+# Issue 9: default colors — omit from JSON metadata when values match defaults
+_DEFAULT_COMPONENT_COLOR: str = "#111111"
+_DEFAULT_LABEL_COLOR: str = "#333333"
+
 _DEFAULT_NODES: dict[str, list[str]] = {
     "R":      ["N001", "N002"],
     "C":      ["N001", "N002"],
@@ -209,11 +213,11 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
         lvp = comp.get("label_val_pos", [0.0, 14.0])
         # Issue 9: include component color and label colors as optional JSON metadata
         meta: dict[str, Any] = {}
-        if comp.get("color") and comp["color"] != "#111111":
+        if comp.get("color") and comp["color"] != _DEFAULT_COMPONENT_COLOR:
             meta["c"] = comp["color"]
-        if comp.get("label_ref_color") and comp["label_ref_color"] != "#333333":
+        if comp.get("label_ref_color") and comp["label_ref_color"] != _DEFAULT_LABEL_COLOR:
             meta["lrc"] = comp["label_ref_color"]
-        if comp.get("label_val_color") and comp["label_val_color"] != "#333333":
+        if comp.get("label_val_color") and comp["label_val_color"] != _DEFAULT_LABEL_COLOR:
             meta["lvc"] = comp["label_val_color"]
         meta_str = ("  " + json.dumps(meta, separators=(",", ":"))) if meta else ""
         lines.append(

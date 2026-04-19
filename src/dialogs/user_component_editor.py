@@ -808,6 +808,10 @@ class _SymView(QGraphicsView):
         else:
             super().wheelEvent(event)
 
+    def zoom_level(self) -> float:
+        """Return the current zoom level (used by the floating toolbar for canvas rotation)."""
+        return self._zoom_level
+
 
 
 
@@ -833,6 +837,8 @@ class _FloatingToolbar(QWidget):
         ("↩", "Undo (Ctrl+Z)", "undo", True),
         ("↪", "Redo (Ctrl+Y)", "redo", True),
     ]
+    # Keys that correspond to actions rather than selectable tools
+    _ACTION_KEYS: frozenset[str] = frozenset({"fill", "clear", "undo", "redo"})
 
     def __init__(self, view: QGraphicsView, scene: "_SymbolScene") -> None:
         super().__init__(view)
@@ -903,9 +909,8 @@ class _FloatingToolbar(QWidget):
 
     def _update_active_tool(self, tool: str) -> None:
         """Issue 4: highlight the button for the currently active tool."""
-        _action_keys = {"fill", "clear", "undo", "redo"}
         for key, btn in self._btn_map.items():
-            if key in _action_keys:
+            if key in self._ACTION_KEYS:
                 continue
             btn.setStyleSheet(
                 self._active_style() if key == tool else self._inactive_style()
@@ -1370,10 +1375,10 @@ class UserComponentEditorDialog(QDialog):
         """Bug 1 fix: rotate the symbol editor view 90° for V perspective, 0° for H.
 
         The current zoom level is preserved across the perspective switch by
-        re-applying ``_zoom_level`` after resetting the transform.
+        re-applying ``zoom_level()`` after resetting the transform.
         """
         view = self._sym_view
-        zoom = view._zoom_level
+        zoom = view.zoom_level()
         view.resetTransform()
         view.scale(zoom, zoom)
         if self._is_v_perspective():
