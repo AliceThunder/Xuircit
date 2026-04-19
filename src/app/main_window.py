@@ -182,9 +182,7 @@ class _CanvasAnnotationToolbar(QWidget):
 
     def _reposition(self) -> None:
         self.move(8, 8)
-
-
-
+class MainWindow(QMainWindow):
     """Main application window for Xuircit."""
 
     def __init__(self) -> None:
