@@ -8,7 +8,7 @@ from enum import Enum, auto
 from typing import Any
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QPainter, QUndoCommand, QUndoStack
+from PyQt6.QtGui import QBrush, QColor, QPainter, QTransform, QUndoCommand, QUndoStack
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEvent
 
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
@@ -250,6 +250,7 @@ class CircuitScene(QGraphicsScene):
     mode_changed = pyqtSignal(str)
     # Fix 9: emitted when ESC resets the annotation tool to "select"
     annotation_tool_reset = pyqtSignal()
+    properties_focus_requested = pyqtSignal(object)
 
     def __init__(self, circuit: Circuit, parent: Any = None) -> None:
         super().__init__(parent)
@@ -449,6 +450,14 @@ class CircuitScene(QGraphicsScene):
 
         # Issue 5: right-click in SELECT mode resets annotation tool
         if event.button() == Qt.MouseButton.RightButton:
+            it = self.itemAt(pos, self.views()[0].transform() if self.views() else QTransform())
+            if (
+                it is not None
+                and bool(it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                and not it.isSelected()
+            ):
+                self.clearSelection()
+                it.setSelected(True)
             self.annotation_tool_reset.emit()
 
         super().mousePressEvent(event)
@@ -1068,6 +1077,12 @@ class CircuitScene(QGraphicsScene):
 
     def _on_selection_changed(self) -> None:
         self.selection_changed_signal.emit(self.selectedItems())
+
+    def focus_properties_for_item(self, item: QGraphicsItem) -> None:
+        if not item.isSelected():
+            self.clearSelection()
+            item.setSelected(True)
+        self.properties_focus_requested.emit(item)
 
     # ------------------------------------------------------------------
     # Rebuild / apply
