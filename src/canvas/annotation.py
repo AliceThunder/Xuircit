@@ -23,18 +23,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..components.wire import _qt_style as _line_style_qt
+
 # Z-value for annotation items (above components)
 ANNOTATION_Z = 20
 
 # Default annotation color
 _DEFAULT_ANNO_COLOR = "#cc2222"
-_LINE_STYLE_MAP = {
-    "solid": Qt.PenStyle.SolidLine,
-    "dash": Qt.PenStyle.DashLine,
-    "dot": Qt.PenStyle.DotLine,
-    "dash_dot": Qt.PenStyle.DashDotLine,
-    "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
-}
 
 
 class AnnotationItem(QGraphicsPathItem):
@@ -80,7 +75,7 @@ class AnnotationItem(QGraphicsPathItem):
 
     def _rebuild_path(self) -> None:
         pen = QPen(QColor(self.anno_color), self.line_width)
-        pen.setStyle(_LINE_STYLE_MAP.get(self.line_style, Qt.PenStyle.SolidLine))
+        pen.setStyle(_line_style_qt(self.line_style))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         self.setPen(pen)

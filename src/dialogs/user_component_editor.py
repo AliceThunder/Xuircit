@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 from ..models.user_library import LabelDef, PinDef, SymbolCmd, UserCompDef
 from ..models.library_system import LibEntry, LibraryManager, PRESET_LIBRARY_ID
 from ..canvas.grid import GRID_SIZE, draw_grid, snap_to_grid
+from ..components.wire import _qt_style as _wire_qt_style
 
 # Issue 7: sub-grid (denser than existing GRID_SIZE=20).
 # Pins still snap to GRID_SIZE; drawing-tool endpoints snap to SUB_GRID.
@@ -126,14 +127,7 @@ class _SymbolScene(QGraphicsScene):
 
     def _draw_pen(self) -> QPen:
         pen = QPen(QColor("#111111"), self._line_width)
-        style_map = {
-            "solid": Qt.PenStyle.SolidLine,
-            "dash": Qt.PenStyle.DashLine,
-            "dot": Qt.PenStyle.DotLine,
-            "dash_dot": Qt.PenStyle.DashDotLine,
-            "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
-        }
-        pen.setStyle(style_map.get(self._line_style_name, Qt.PenStyle.SolidLine))
+        pen.setStyle(_wire_qt_style(self._line_style_name))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         return pen
@@ -141,16 +135,7 @@ class _SymbolScene(QGraphicsScene):
     @staticmethod
     def _pen_for_cmd(cmd: SymbolCmd) -> QPen:
         pen = QPen(QColor("#111111"), float(getattr(cmd, "line_width", 2.0)))
-        style_map = {
-            "solid": Qt.PenStyle.SolidLine,
-            "dash": Qt.PenStyle.DashLine,
-            "dot": Qt.PenStyle.DotLine,
-            "dash_dot": Qt.PenStyle.DashDotLine,
-            "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
-        }
-        pen.setStyle(style_map.get(
-            str(getattr(cmd, "line_style", "solid")), Qt.PenStyle.SolidLine
-        ))
+        pen.setStyle(_wire_qt_style(str(getattr(cmd, "line_style", "solid"))))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         return pen

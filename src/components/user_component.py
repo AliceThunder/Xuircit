@@ -8,6 +8,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 
 from .base import ComponentItem, LabelItem, _std_pen
 from ..models.user_library import UserCompDef
+from .wire import _qt_style as _wire_qt_style
 
 
 def _apply_label_style(label: LabelItem, style: dict) -> None:
@@ -314,14 +315,7 @@ class UserComponentItem(ComponentItem):
                     painter.drawPath(path)
 def _cmd_pen(color: str, style_name: str, width: float) -> QPen:
     pen = QPen(QColor(color), width)
-    style_map = {
-        "solid": Qt.PenStyle.SolidLine,
-        "dash": Qt.PenStyle.DashLine,
-        "dot": Qt.PenStyle.DotLine,
-        "dash_dot": Qt.PenStyle.DashDotLine,
-        "dash_dot_dot": Qt.PenStyle.DashDotDotLine,
-    }
-    pen.setStyle(style_map.get(style_name, Qt.PenStyle.SolidLine))
+    pen.setStyle(_wire_qt_style(style_name))
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     return pen

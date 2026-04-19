@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEv
 
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
 from ..components.base import ComponentItem, PinItem
-from ..components.wire import WireItem
+from ..components.wire import WireItem, _qt_style as _wire_qt_style
 from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
@@ -641,15 +641,7 @@ class CircuitScene(QGraphicsScene):
             self._anno_poly_pts.append(pos)
             if len(self._anno_poly_pts) >= 2:
                 pen = QPen(QC(self._anno_color), self._anno_line_width)
-                from PyQt6.QtCore import Qt as Qt_
-                _map = {
-                    "solid": Qt_.PenStyle.SolidLine,
-                    "dash": Qt_.PenStyle.DashLine,
-                    "dot": Qt_.PenStyle.DotLine,
-                    "dash_dot": Qt_.PenStyle.DashDotLine,
-                    "dash_dot_dot": Qt_.PenStyle.DashDotDotLine,
-                }
-                pen.setStyle(_map.get(self._anno_line_style, Qt_.PenStyle.SolidLine))
+                pen.setStyle(_wire_qt_style(self._anno_line_style))
                 p1, p2 = self._anno_poly_pts[-2], self._anno_poly_pts[-1]
                 seg = self.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
                 self._anno_poly_segs.append(seg)
