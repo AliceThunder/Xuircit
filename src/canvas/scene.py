@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSceneMouseEv
 from ..canvas.grid import draw_grid, snap_to_grid, GRID_SIZE
 from ..components.base import ComponentItem, PinItem
 from ..components.wire import WireItem, _qt_style as _wire_qt_style
-from ..components.node import JunctionItem, GroundItem, NetLabelItem
 from ..models.circuit import Circuit
 
 # Bug 8: Annotation layer snaps to a grid twice as dense as the current 10 px,
@@ -112,24 +111,6 @@ def _fix_node_value_split(
     return comp
 
 
-def _sanitize_points(raw: object) -> list:
-    """Return a list of valid [x, y] numeric pairs from *raw*.
-
-    Non-list values, entries that are not sequences of length ≥ 2, and
-    entries whose first two elements cannot be coerced to float are silently
-    dropped so that malformed symbol data cannot crash component creation.
-    """
-    if not isinstance(raw, list):
-        return []
-    result: list = []
-    for pt in raw:
-        try:
-            if not hasattr(pt, "__len__") or len(pt) < 2:
-                continue
-            result.append([float(pt[0]), float(pt[1])])
-        except Exception:
-            continue
-    return result
 
 
 def create_component_item(
@@ -143,95 +124,29 @@ def create_component_item(
     """Create a ComponentItem for *comp_type*.
 
     Components are instantiated strictly from user library definitions.
+    If the specific library is not found (e.g. library was deleted or renamed),
+    a fallback search across all libraries is attempted so that components
+    remain visible.
     """
     try:
         from ..models.library_system import LibraryManager
         lm = LibraryManager()
         result = lm.find_entry(comp_type, library_id)
+        # Problem 1 / Problem 2: if strict lookup fails, fall back to any library
+        # that has this type.  This keeps virtual components and user components
+        # visible even when the specific library_id can no longer be resolved
+        # (e.g. library deleted, UUID changed, or loading an old project).
+        if result is None and library_id:
+            result = lm.find_entry(comp_type, None)
         if result is None:
             return None
         entry, found_lib_id = result
-        from ..models.user_library import UserCompDef, PinDef, SymbolCmd, LabelDef
+
+        # Problem 3: use the shared UserCompDef.from_dict conversion to avoid
+        # manually duplicating all field mapping logic in this function.
+        from ..models.user_library import UserCompDef
         from ..components.user_component import UserComponentItem
-
-        pins: list[PinDef] = []
-        seen_pin_names: set[str] = set()
-        for p in entry.pins:
-            try:
-                raw_name = p.get("name", "") if isinstance(p, dict) else getattr(p, "name", "")
-                name = str(raw_name or "").strip()
-                if not name or name in seen_pin_names:
-                    continue
-                pins.append(PinDef(
-                    name=name,
-                    x=float(p.get("x", 0.0) if isinstance(p, dict) else getattr(p, "x", 0.0)),
-                    y=float(p.get("y", 0.0) if isinstance(p, dict) else getattr(p, "y", 0.0)),
-                ))
-                seen_pin_names.add(name)
-            except Exception:
-                continue
-
-        symbol: list[SymbolCmd] = []
-        for s in entry.symbol:
-            try:
-                symbol.append(SymbolCmd(
-                    kind=s.get("kind", "line"),
-                    x1=float(s.get("x1", 0.0)),
-                    y1=float(s.get("y1", 0.0)),
-                    x2=float(s.get("x2", 0.0)),
-                    y2=float(s.get("y2", 0.0)),
-                    w=float(s.get("w", 0.0)),
-                    h=float(s.get("h", 0.0)),
-                    text=str(s.get("text", "")),
-                    line_style=str(s.get("line_style", "solid")),
-                    line_width=float(s.get("line_width", 2.0)),
-                    filled=bool(s.get("filled", False)),
-                    points=_sanitize_points(s.get("points", [])),
-                ))
-            except Exception:
-                continue
-
-        labels: list[LabelDef] = []
-        for lb in entry.labels:
-            try:
-                labels.append(LabelDef(
-                    text=str(lb.get("text", "")),
-                    side=str(lb.get("side", "top")),
-                    order=int(lb.get("order", 0)),
-                    default_value=str(lb.get("default_value", "")),
-                    dx=float(lb.get("dx", 0.0)),
-                    dy=float(lb.get("dy", 0.0)),
-                    dx_v=float(lb.get("dx_v", 0.0)),
-                    dy_v=float(lb.get("dy_v", 0.0)),
-                    font_family=str(lb.get("font_family", "")),
-                    font_size=int(lb.get("font_size", 0)),
-                    bold=bool(lb.get("bold", False)),
-                    italic=bool(lb.get("italic", False)),
-                    color=str(lb.get("color", "")),
-                    alignment=str(lb.get("alignment", "left")),
-                    use_offset=bool(lb.get("use_offset", False)),
-                ))
-            except Exception:
-                continue
-
-        udef = UserCompDef(
-            type_name=entry.type_name,
-            display_name=entry.display_name,
-            category=entry.category,
-            description=entry.description,
-            ref_prefix=entry.ref_prefix,
-            default_value=entry.default_value,
-            pins=pins,
-            symbol=symbol,
-            ref_label_offset=entry.ref_label_offset,
-            val_label_offset=entry.val_label_offset,
-            ref_label_offset_v=entry.ref_label_offset_v,
-            val_label_offset_v=entry.val_label_offset_v,
-            ref_label_style=entry.ref_label_style,
-            val_label_style=entry.val_label_style,
-            labels=labels,
-            is_virtual=entry.is_virtual,
-        )
+        udef = UserCompDef.from_dict(entry.to_dict())
         return UserComponentItem(udef, ref=ref, value=value,
                                  params=params or {}, comp_id=comp_id,
                                  library_id=found_lib_id)
@@ -357,7 +272,11 @@ class CircuitScene(QGraphicsScene):
         if library_id is not None:
             from ..models.library_system import LibraryManager
             result = LibraryManager().find_entry(comp_type, library_id)
-            if result is None or result[1] != library_id:
+            # Problem 1: if the strict lookup fails (library may not yet be
+            # flushed to disk / singleton race), try searching all libraries.
+            if result is None:
+                result = LibraryManager().find_entry(comp_type, None)
+            if result is None:
                 return
         item = create_component_item(
             comp_type, ref="?", library_id=self._pending_library_id
@@ -504,10 +423,18 @@ class CircuitScene(QGraphicsScene):
           dragging is enabled; otherwise label items are not selectable and the
           walk continues to the parent component.
         """
+        from ..components.base import LabelItem
         view_transform = self.views()[0].transform() if self.views() else QTransform()
         item = self.itemAt(pos, view_transform)
         while item is not None:
             if bool(item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable):
+                # Problem 4: When label dragging is disabled, a LabelItem cannot
+                # actually be selected (itemChange blocks it).  Skip past labels
+                # and continue walking up to the parent ComponentItem so that a
+                # right-click on a label still selects/highlights the component.
+                if isinstance(item, LabelItem) and not LabelItem._dragging_enabled:
+                    item = item.parentItem()
+                    continue
                 return item
             item = item.parentItem()
         return None
@@ -574,11 +501,13 @@ class CircuitScene(QGraphicsScene):
         lm = LibraryManager()
         requested_library_id = self._pending_library_id
         result = lm.find_entry(self._pending_type, requested_library_id)
+        # Fallback: if strict library_id lookup fails (library deleted/renamed),
+        # search all libraries by type_name so placement still works.
+        if result is None and requested_library_id:
+            result = lm.find_entry(self._pending_type, None)
         if result is None:
             return
         entry, library_id = result
-        if requested_library_id is not None and library_id != requested_library_id:
-            return
 
         # Capture before-state for undo
         before = self._take_snapshot()
@@ -1514,6 +1443,10 @@ class CircuitScene(QGraphicsScene):
             }
             if vcomp.get("color"):
                 comp_dict["color"] = vcomp["color"]
+            # Problem 1: propagate is_virtual flag so rebuild_from_circuit can
+            # still render the component even if the library_id is no longer valid.
+            if vcomp.get("is_virtual"):
+                comp_dict["is_virtual"] = True
             self.circuit.add_component(comp_dict)
 
         # Fix 11: Restore annotations from XCIT annotation section

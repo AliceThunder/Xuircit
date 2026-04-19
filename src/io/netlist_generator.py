@@ -69,11 +69,12 @@ def generate_netlist(circuit: Circuit) -> str:
 
     net_map = _build_net_map(circuit)
 
-    from ..models.component_library import ComponentLibrary
-    lib = ComponentLibrary()
+    from ..models.library_system import LibraryManager
+    lm = LibraryManager()
 
     for comp in circuit.components:
         ctype = comp.get("type", "R")
+        lib_id = comp.get("library_id")
         prefix = _TYPE_PREFIX.get(ctype, "X")
         if not prefix:
             continue
@@ -83,13 +84,23 @@ def generate_netlist(circuit: Circuit) -> str:
         params = comp.get("params", {})
         comp_id = comp.get("id", "")
 
-        cdef = lib.get(ctype)
-        pin_names = cdef.pins if cdef else []
+        # Use LibraryManager to get pin names for user-defined components.
+        # Fall back to _DEFAULT_NODES for types not in the library.
+        pin_names: list[str] = []
+        result = lm.find_entry(ctype, lib_id)
+        if result is None and lib_id:
+            result = lm.find_entry(ctype, None)
+        if result is not None:
+            entry, _ = result
+            pin_names = [
+                p.get("name", "") if isinstance(p, dict) else getattr(p, "name", "")
+                for p in entry.pins
+            ]
 
         node_tokens: list[str] = []
         for pin in pin_names:
             key = (comp_id, pin)
-            node_tokens.append(net_map.get(key, pin.upper()))
+            node_tokens.append(net_map.get(key, str(pin).upper()))
 
         if not node_tokens:
             node_tokens = _DEFAULT_NODES.get(ctype, ["N001", "N002"])

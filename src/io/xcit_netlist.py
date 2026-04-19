@@ -296,6 +296,15 @@ def generate_xcit_netlist(circuit: Circuit) -> str:
             vmeta: dict[str, Any] = {}
             if comp.get("color") and comp["color"] != _DEFAULT_COMPONENT_COLOR:
                 vmeta["c"] = comp["color"]
+            # Problem 1: always store the library_id and is_virtual flag so that
+            # the component can be identified and rendered even if the library
+            # entry is later not found by the strict library_id lookup.
+            if lib_id:
+                vmeta["lid"] = lib_id
+            # Mark user-defined virtual components explicitly so they can be
+            # distinguished from the hardcoded _VIRTUAL_TYPES on reload.
+            if ctype not in _VIRTUAL_TYPES:
+                vmeta["iv"] = 1
             vmeta_str = ("  " + json.dumps(vmeta, separators=(",", ":"))) if vmeta else ""
             lines.append(
                 f"{ctype}  {ref}  {x:.2f}  {y:.2f}  {rot}  {fh}  {fv}  {lib_id}{vmeta_str}"
@@ -509,8 +518,14 @@ def parse_xcit_netlist(
             "rotation": vrot,
             "flip_h": vfh,
             "flip_v": vfv,
-            "library_id": vlib,
+            # Problem 1: prefer library_id from JSON metadata (field "lid")
+            # which is always present for user-defined virtual components.
+            # Fall back to the positional field for older files.
+            "library_id": vmeta.get("lid") or vlib or None,
             "color": vmeta.get("c"),
+            # Propagate the is_virtual flag so rebuild_from_circuit can create
+            # the correct component even if the library_id is stale.
+            "is_virtual": bool(vmeta.get("iv", 0)),
         })
 
     # Parse .xcit_annotation section (Fix 11)
