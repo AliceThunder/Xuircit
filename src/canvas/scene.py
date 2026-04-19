@@ -111,6 +111,27 @@ def _fix_node_value_split(
         pass
     return comp
 
+
+def _sanitize_points(raw: object) -> list:
+    """Return a list of valid [x, y] numeric pairs from *raw*.
+
+    Non-list values, entries that are not sequences of length ≥ 2, and
+    entries whose first two elements cannot be coerced to float are silently
+    dropped so that malformed symbol data cannot crash component creation.
+    """
+    if not isinstance(raw, list):
+        return []
+    result: list = []
+    for pt in raw:
+        try:
+            if not hasattr(pt, "__len__") or len(pt) < 2:
+                continue
+            result.append([float(pt[0]), float(pt[1])])
+        except Exception:
+            continue
+    return result
+
+
 def create_component_item(
     comp_type: str,
     ref: str = "X1",
@@ -134,13 +155,19 @@ def create_component_item(
         from ..components.user_component import UserComponentItem
 
         pins: list[PinDef] = []
+        seen_pin_names: set[str] = set()
         for p in entry.pins:
             try:
+                raw_name = p.get("name", "") if isinstance(p, dict) else getattr(p, "name", "")
+                name = str(raw_name or "").strip()
+                if not name or name in seen_pin_names:
+                    continue
                 pins.append(PinDef(
-                    name=p.get("name", ""),
-                    x=float(p.get("x", 0.0)),
-                    y=float(p.get("y", 0.0)),
+                    name=name,
+                    x=float(p.get("x", 0.0) if isinstance(p, dict) else getattr(p, "x", 0.0)),
+                    y=float(p.get("y", 0.0) if isinstance(p, dict) else getattr(p, "y", 0.0)),
                 ))
+                seen_pin_names.add(name)
             except Exception:
                 continue
 
@@ -159,7 +186,7 @@ def create_component_item(
                     line_style=str(s.get("line_style", "solid")),
                     line_width=float(s.get("line_width", 2.0)),
                     filled=bool(s.get("filled", False)),
-                    points=s.get("points", []),
+                    points=_sanitize_points(s.get("points", [])),
                 ))
             except Exception:
                 continue

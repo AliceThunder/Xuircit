@@ -55,6 +55,31 @@ def _snap_sub(x: float, y: float) -> tuple[float, float]:
     return round(x / SUB_GRID) * SUB_GRID, round(y / SUB_GRID) * SUB_GRID
 
 
+def _build_pins_defensive(raw_pins: list) -> list[PinDef]:
+    """Build a list of PinDef from *raw_pins*, skipping blank or duplicate names.
+
+    Accepts both dict-style entries and PinDef objects so the editor can
+    recover from malformed or legacy library data without crashing.
+    """
+    result: list[PinDef] = []
+    seen: set[str] = set()
+    for p in raw_pins:
+        try:
+            raw_name = p.get("name", "") if isinstance(p, dict) else getattr(p, "name", "")
+            name = str(raw_name or "").strip()
+            if not name or name in seen:
+                continue
+            result.append(PinDef(
+                name=name,
+                x=float(p.get("x", 0.0) if isinstance(p, dict) else getattr(p, "x", 0.0)),
+                y=float(p.get("y", 0.0) if isinstance(p, dict) else getattr(p, "y", 0.0)),
+            ))
+            seen.add(name)
+        except Exception:
+            continue
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Undo command for symbol scene (Issue 6)
 # ---------------------------------------------------------------------------
@@ -1410,7 +1435,7 @@ class UserComponentEditorDialog(QDialog):
                 description=existing.description,
                 ref_prefix=existing.ref_prefix,
                 default_value=existing.default_value,
-                pins=[PinDef(**p) for p in existing.pins],
+                pins=_build_pins_defensive(existing.pins),
                 symbol=[
                     SymbolCmd(
                         kind=s.get("kind", "line") if isinstance(s, dict) else s.kind,
