@@ -165,8 +165,10 @@ class _SymbolScene(QGraphicsScene):
             return
         before = self._snapshot()
         self.set_line_style(style_name, width)
-        for it in selected:
-            idx = self._sym_items.index(it)
+        selected_set = set(selected)
+        for idx, it in enumerate(self._sym_items):
+            if it not in selected_set:
+                continue
             cmd = self.sym_cmds[idx]
             cmd.line_style = style_name
             cmd.line_width = self._line_width
