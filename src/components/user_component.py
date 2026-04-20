@@ -14,7 +14,7 @@ from .wire import _qt_style as _wire_qt_style
 def _apply_label_style(label: LabelItem, style: dict) -> None:
     """Feature 7: apply a style dict to a LabelItem.
 
-    Keys recognised: font_family, font_size, bold, italic, color.
+    Keys recognised: font_family, font_size, bold, italic, color, alignment.
     Missing keys leave the existing setting unchanged.
     """
     if not style:
@@ -25,6 +25,7 @@ def _apply_label_style(label: LabelItem, style: dict) -> None:
     bold = bool(style.get("bold", False))
     italic = bool(style.get("italic", False))
     color = str(style.get("color", ""))
+    alignment = str(style.get("alignment", ""))
 
     if fam or sz or bold or italic:
         base = label.font()
@@ -38,6 +39,12 @@ def _apply_label_style(label: LabelItem, style: dict) -> None:
             label.setBrush(QB_(QC_(color)))
         except Exception:
             pass
+    # Bug 3 fix: apply explicit alignment override when set
+    if alignment in ("left", "center", "right"):
+        label._alignment_override = alignment
+    elif alignment == "auto" or not alignment:
+        # "auto" or empty string means reset to position-based auto-compute
+        label._alignment_override = None
 
 
 class UserComponentItem(ComponentItem):
@@ -60,8 +67,13 @@ class UserComponentItem(ComponentItem):
             all_x.append(p.x)
             all_y.append(p.y)
         for s in udef.symbol:
-            all_x += [s.x1, s.x2, s.x1 + s.w]
-            all_y += [s.y1, s.y2, s.y1 + s.h]
+            if s.kind == "arc":
+                # Arc is center-based (x1=cx, y1=cy); use its actual extents
+                all_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
+                all_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
+            else:
+                all_x += [s.x1, s.x2, s.x1 + s.w]
+                all_y += [s.y1, s.y2, s.y1 + s.h]
             # Feature #3: include polyline points in bounding box
             for pt in s.points:
                 if len(pt) >= 2:
@@ -89,6 +101,10 @@ class UserComponentItem(ComponentItem):
                 body_x += [s.x1, s.x1 + s.w]
                 body_y += [s.y1, s.y1 + s.h]
             elif s.kind == "ellipse":
+                body_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
+                body_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
+            elif s.kind == "arc":
+                # Arc is center-based (x1=cx, y1=cy); include full bounding box
                 body_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
                 body_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
             elif s.kind == "polyline":
@@ -123,6 +139,9 @@ class UserComponentItem(ComponentItem):
         self._val_offset_v: tuple[float, float] = (
             udef.val_label_offset_v[0], udef.val_label_offset_v[1]
         ) if udef.val_label_offset_v else self._val_label_offset
+        # Bug 3 fix: V-perspective label styles (fallback to H style if not set)
+        self._ref_style_v: dict = getattr(udef, "ref_label_style_v", {}) or {}
+        self._val_style_v: dict = getattr(udef, "val_label_style_v", {}) or {}
 
         super().__init__(udef.type_name, ref, value, params, comp_id,
                          library_id=library_id)
@@ -143,7 +162,7 @@ class UserComponentItem(ComponentItem):
             self._show_val_label = False
             self._refresh_labels()
 
-        # Feature 7: apply per-label styles to ref and val labels
+        # Feature 7: apply per-label styles to ref and val labels (H perspective)
         _apply_label_style(self._ref_label, udef.ref_label_style)
         _apply_label_style(self._val_label, udef.val_label_style)
 
@@ -238,10 +257,10 @@ class UserComponentItem(ComponentItem):
         self._apply_perspective_label_offsets()
 
     def _apply_perspective_label_offsets(self) -> None:
-        """Feature 8: apply H or V label offsets based on the current rotation.
+        """Feature 8 / Bug 3 fix: apply H or V label offsets and alignment based on rotation.
 
-        Horizontal (0° / 180°): use H offsets (ref_label_offset, val_label_offset).
-        Vertical (90° / 270°): use V offsets (ref_offset_v, val_offset_v).
+        Horizontal (0° / 180°): use H offsets + H alignment.
+        Vertical (90° / 270°): use V offsets + V alignment.
         """
         import math
         angle = self.rotation() % 360.0
@@ -250,9 +269,19 @@ class UserComponentItem(ComponentItem):
         if is_vertical and hasattr(self, "_ref_offset_v"):
             self._ref_label.setPos(QPointF(*self._ref_offset_v))
             self._val_label.setPos(QPointF(*self._val_offset_v))
+            # Bug 3 fix: apply V-perspective alignment (fall back to H style if not set)
+            _apply_label_style(self._ref_label,
+                               self._ref_style_v if self._ref_style_v
+                               else self._udef.ref_label_style)
+            _apply_label_style(self._val_label,
+                               self._val_style_v if self._val_style_v
+                               else self._udef.val_label_style)
         else:
             self._ref_label.setPos(QPointF(*self._ref_label_offset))
             self._val_label.setPos(QPointF(*self._val_label_offset))
+            # Bug 3 fix: apply H-perspective alignment
+            _apply_label_style(self._ref_label, self._udef.ref_label_style)
+            _apply_label_style(self._val_label, self._udef.val_label_style)
         # Also apply explicit offsets to extra labels
         is_v_flag = is_vertical
         for i, (ldef, litem) in enumerate(zip(self._udef.labels,

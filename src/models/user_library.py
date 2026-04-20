@@ -110,6 +110,11 @@ class UserCompDef:
     # Each style dict may contain: font_family, font_size, bold, italic, color, alignment
     ref_label_style: dict = field(default_factory=dict)
     val_label_style: dict = field(default_factory=dict)
+    # Bug 3 fix: separate label styles for the vertical (rotated 90°) perspective.
+    # When non-empty, the alignment (and other style keys) override the H-perspective
+    # values when the component is rotated to a vertical orientation.
+    ref_label_style_v: dict = field(default_factory=dict)
+    val_label_style_v: dict = field(default_factory=dict)
     # Extra named labels beyond ref/value (order within a side is preserved).
     labels: list[LabelDef] = field(default_factory=list)
     # Bug 2: virtual flag — when True, ref/value labels are hidden and
@@ -184,6 +189,8 @@ class UserCompDef:
             val_label_offset_v=d.get("val_label_offset_v", []),
             ref_label_style=d.get("ref_label_style", {}),
             val_label_style=d.get("val_label_style", {}),
+            ref_label_style_v=d.get("ref_label_style_v", {}),
+            val_label_style_v=d.get("val_label_style_v", {}),
             labels=labels,
             is_virtual=d.get("is_virtual", False),
         )
