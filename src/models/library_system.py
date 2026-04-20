@@ -44,6 +44,9 @@ class LibEntry:
     # Feature 7: per-label style dicts for ref and val
     ref_label_style: dict = field(default_factory=dict)
     val_label_style: dict = field(default_factory=dict)
+    # Bug 3 fix: separate label styles for the vertical (rotated 90°) perspective
+    ref_label_style_v: dict = field(default_factory=dict)
+    val_label_style_v: dict = field(default_factory=dict)
     # Extra named labels (for user-defined components).
     labels: list[dict] = field(default_factory=list)
     # Fix 3: True ⟹ component is a virtual (non-SPICE) wiring helper.
@@ -75,6 +78,8 @@ class LibEntry:
             val_label_offset_v=d.get("val_label_offset_v", []),
             ref_label_style=d.get("ref_label_style", {}),
             val_label_style=d.get("val_label_style", {}),
+            ref_label_style_v=d.get("ref_label_style_v", {}),
+            val_label_style_v=d.get("val_label_style_v", {}),
             labels=d.get("labels", []),
             is_virtual=d.get("is_virtual", False),
         )

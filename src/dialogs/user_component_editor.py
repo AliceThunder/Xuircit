@@ -547,6 +547,54 @@ class _SymbolScene(QGraphicsScene):
         it.setPen(self._draw_pen())
         return it
 
+    def mouseReleaseEvent(self, event: Any) -> None:
+        """Bug 1 fix: commit any drag-induced item position offsets back to
+        sym_cmds so that saved/placed components reflect the dragged positions.
+        """
+        before = self._snapshot()
+        super().mouseReleaseEvent(event)
+        if self._tool == "select":
+            if self._finalize_dragged_positions():
+                self._push_undo("Move", before, self._snapshot())
+
+    def _finalize_dragged_positions(self) -> bool:
+        """Sync each sym_item's pos() offset back into sym_cmds and rebuild it.
+
+        Returns True if at least one item had a non-zero position (i.e. was
+        moved by mouse drag since the last finalization).
+
+        After this call all sym_items have pos() == (0, 0) and sym_cmds
+        contains the updated absolute coordinates.
+        """
+        changed = False
+        for idx in range(len(self._sym_items)):
+            item = self._sym_items[idx]
+            cmd = self.sym_cmds[idx]
+            pos = item.pos()
+            if abs(pos.x()) < 0.01 and abs(pos.y()) < 0.01:
+                continue
+            changed = True
+            # Update the stored command with the drag offset
+            cmd.x1 += pos.x()
+            cmd.y1 += pos.y()
+            if cmd.kind == "line":
+                cmd.x2 += pos.x()
+                cmd.y2 += pos.y()
+            elif cmd.kind == "polyline":
+                cmd.points = [
+                    [p[0] + pos.x(), p[1] + pos.y()] for p in cmd.points
+                ]
+            # Rebuild the item so its pos() returns to (0, 0) but its
+            # path/rect/ellipse geometry now encodes the new absolute position.
+            was_selected = item.isSelected()
+            self.removeItem(item)
+            new_item = self._build_sym_item(cmd)
+            new_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            new_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+            new_item.setSelected(was_selected)
+            self._sym_items[idx] = new_item
+        return changed
+
     def mouseMoveEvent(self, event: Any) -> None:
         pos = event.scenePos()
         # Preview for line/rect/ellipse/arc
@@ -1350,6 +1398,13 @@ class UserComponentEditorDialog(QDialog):
         self._ref_dy_spin = _make_dspin(-22.0)
         ref_h_row.addWidget(QLabel("H  dx:")); ref_h_row.addWidget(self._ref_dx_spin)
         ref_h_row.addWidget(QLabel("dy:")); ref_h_row.addWidget(self._ref_dy_spin)
+        # Bug 3 fix: separate alignment for H perspective
+        self._ref_align_h_combo = QComboBox()
+        self._ref_align_h_combo.setMaximumWidth(70)
+        self._ref_align_h_combo.setToolTip("Horizontal-perspective text alignment")
+        for _a in ("auto", "left", "center", "right"):
+            self._ref_align_h_combo.addItem(_a)
+        ref_h_row.addWidget(QLabel("align:")); ref_h_row.addWidget(self._ref_align_h_combo)
         label_pos_form.addRow("Ref label pos:", ref_h_row)
 
         ref_v_row = QHBoxLayout()
@@ -1357,9 +1412,16 @@ class UserComponentEditorDialog(QDialog):
         self._ref_dy_v_spin = _make_dspin(-22.0)
         ref_v_row.addWidget(QLabel("V  dx:")); ref_v_row.addWidget(self._ref_dx_v_spin)
         ref_v_row.addWidget(QLabel("dy:")); ref_v_row.addWidget(self._ref_dy_v_spin)
+        # Bug 3 fix: separate alignment for V perspective
+        self._ref_align_v_combo = QComboBox()
+        self._ref_align_v_combo.setMaximumWidth(70)
+        self._ref_align_v_combo.setToolTip("Vertical-perspective text alignment")
+        for _a in ("auto", "left", "center", "right"):
+            self._ref_align_v_combo.addItem(_a)
+        ref_v_row.addWidget(QLabel("align:")); ref_v_row.addWidget(self._ref_align_v_combo)
         label_pos_form.addRow("", ref_v_row)
 
-        # Feature 7: Ref label style
+        # Feature 7: Ref label style (font/color shared across perspectives)
         ref_style_row = QHBoxLayout()
         self._ref_font_family_edit = QLineEdit("")
         self._ref_font_family_edit.setPlaceholderText("font (blank=default)")
@@ -1374,16 +1436,12 @@ class UserComponentEditorDialog(QDialog):
         self._ref_color_edit = QLineEdit("")
         self._ref_color_edit.setPlaceholderText("#rrggbb")
         self._ref_color_edit.setMaximumWidth(75)
-        self._ref_align_combo = QComboBox()
-        for _a in ("left", "center", "right"):
-            self._ref_align_combo.addItem(_a)
         ref_style_row.addWidget(QLabel("Style:"))
         ref_style_row.addWidget(self._ref_font_family_edit)
         ref_style_row.addWidget(self._ref_font_size_spin)
         ref_style_row.addWidget(self._ref_bold_cb)
         ref_style_row.addWidget(self._ref_italic_cb)
         ref_style_row.addWidget(self._ref_color_edit)
-        ref_style_row.addWidget(self._ref_align_combo)
         label_pos_form.addRow("Ref style:", ref_style_row)
 
         # ── Val label ──
@@ -1392,6 +1450,13 @@ class UserComponentEditorDialog(QDialog):
         self._val_dy_spin = _make_dspin(14.0)
         val_h_row.addWidget(QLabel("H  dx:")); val_h_row.addWidget(self._val_dx_spin)
         val_h_row.addWidget(QLabel("dy:")); val_h_row.addWidget(self._val_dy_spin)
+        # Bug 3 fix: separate alignment for H perspective
+        self._val_align_h_combo = QComboBox()
+        self._val_align_h_combo.setMaximumWidth(70)
+        self._val_align_h_combo.setToolTip("Horizontal-perspective text alignment")
+        for _a in ("auto", "left", "center", "right"):
+            self._val_align_h_combo.addItem(_a)
+        val_h_row.addWidget(QLabel("align:")); val_h_row.addWidget(self._val_align_h_combo)
         label_pos_form.addRow("Val label pos:", val_h_row)
 
         val_v_row = QHBoxLayout()
@@ -1399,9 +1464,16 @@ class UserComponentEditorDialog(QDialog):
         self._val_dy_v_spin = _make_dspin(14.0)
         val_v_row.addWidget(QLabel("V  dx:")); val_v_row.addWidget(self._val_dx_v_spin)
         val_v_row.addWidget(QLabel("dy:")); val_v_row.addWidget(self._val_dy_v_spin)
+        # Bug 3 fix: separate alignment for V perspective
+        self._val_align_v_combo = QComboBox()
+        self._val_align_v_combo.setMaximumWidth(70)
+        self._val_align_v_combo.setToolTip("Vertical-perspective text alignment")
+        for _a in ("auto", "left", "center", "right"):
+            self._val_align_v_combo.addItem(_a)
+        val_v_row.addWidget(QLabel("align:")); val_v_row.addWidget(self._val_align_v_combo)
         label_pos_form.addRow("", val_v_row)
 
-        # Feature 7: Val label style
+        # Feature 7: Val label style (font/color shared across perspectives)
         val_style_row = QHBoxLayout()
         self._val_font_family_edit = QLineEdit("")
         self._val_font_family_edit.setPlaceholderText("font (blank=default)")
@@ -1416,16 +1488,12 @@ class UserComponentEditorDialog(QDialog):
         self._val_color_edit = QLineEdit("")
         self._val_color_edit.setPlaceholderText("#rrggbb")
         self._val_color_edit.setMaximumWidth(75)
-        self._val_align_combo = QComboBox()
-        for _a in ("left", "center", "right"):
-            self._val_align_combo.addItem(_a)
         val_style_row.addWidget(QLabel("Style:"))
         val_style_row.addWidget(self._val_font_family_edit)
         val_style_row.addWidget(self._val_font_size_spin)
         val_style_row.addWidget(self._val_bold_cb)
         val_style_row.addWidget(self._val_italic_cb)
         val_style_row.addWidget(self._val_color_edit)
-        val_style_row.addWidget(self._val_align_combo)
 
         label_pos_form.addRow("Val style:", val_style_row)
 
@@ -1514,9 +1582,15 @@ class UserComponentEditorDialog(QDialog):
             self._ref_bold_cb.setChecked(bool(ref_style.get("bold", False)))
             self._ref_italic_cb.setChecked(bool(ref_style.get("italic", False)))
             self._ref_color_edit.setText(ref_style.get("color", ""))
-            ref_align = ref_style.get("alignment", "left")
-            self._ref_align_combo.setCurrentIndex(
-                max(0, self._ref_align_combo.findText(ref_align)))
+            # Bug 3 fix: per-perspective H alignment for ref
+            ref_align_h = ref_style.get("alignment", "auto")
+            self._ref_align_h_combo.setCurrentIndex(
+                max(0, self._ref_align_h_combo.findText(ref_align_h)))
+            # Bug 3 fix: per-perspective V alignment for ref
+            ref_style_v = getattr(existing, "ref_label_style_v", {}) or {}
+            ref_align_v = ref_style_v.get("alignment", "auto")
+            self._ref_align_v_combo.setCurrentIndex(
+                max(0, self._ref_align_v_combo.findText(ref_align_v)))
             # Feature 7: pre-fill val style
             val_style = getattr(existing, "val_label_style", {}) or {}
             self._val_font_family_edit.setText(val_style.get("font_family", ""))
@@ -1524,9 +1598,15 @@ class UserComponentEditorDialog(QDialog):
             self._val_bold_cb.setChecked(bool(val_style.get("bold", False)))
             self._val_italic_cb.setChecked(bool(val_style.get("italic", False)))
             self._val_color_edit.setText(val_style.get("color", ""))
-            val_align = val_style.get("alignment", "left")
-            self._val_align_combo.setCurrentIndex(
-                max(0, self._val_align_combo.findText(val_align)))
+            # Bug 3 fix: per-perspective H alignment for val
+            val_align_h = val_style.get("alignment", "auto")
+            self._val_align_h_combo.setCurrentIndex(
+                max(0, self._val_align_h_combo.findText(val_align_h)))
+            # Bug 3 fix: per-perspective V alignment for val
+            val_style_v = getattr(existing, "val_label_style_v", {}) or {}
+            val_align_v = val_style_v.get("alignment", "auto")
+            self._val_align_v_combo.setCurrentIndex(
+                max(0, self._val_align_v_combo.findText(val_align_v)))
             _sym_udef = UserCompDef(
                 type_name=existing.type_name,
                 display_name=existing.display_name,
@@ -1548,6 +1628,11 @@ class UserComponentEditorDialog(QDialog):
                         filled=s.get("filled", False) if isinstance(s, dict) else s.filled,
                         # Bug 2 fix: include points so polylines are preserved on re-edit
                         points=s.get("points", []) if isinstance(s, dict) else s.points,
+                        # Bug 1 fix: preserve arc angles so arcs are shown correctly on re-edit
+                        start_angle=s.get("start_angle", 0.0) if isinstance(s, dict) else s.start_angle,
+                        span_angle=s.get("span_angle", 180.0) if isinstance(s, dict) else s.span_angle,
+                        line_style=s.get("line_style", "solid") if isinstance(s, dict) else s.line_style,
+                        line_width=s.get("line_width", 2.0) if isinstance(s, dict) else s.line_width,
                     )
                     for s in existing.symbol
                 ],
@@ -1881,14 +1966,15 @@ class UserComponentEditorDialog(QDialog):
             val_label_offset_v=[
                 self._val_dx_v_spin.value(), self._val_dy_v_spin.value()
             ],
-            # Feature 7: ref/val label styles
+            # Feature 7: ref/val label styles (H perspective)
+            # Bug 3 fix: alignment is now stored per-perspective
             ref_label_style={
                 "font_family": self._ref_font_family_edit.text().strip(),
                 "font_size": self._ref_font_size_spin.value(),
                 "bold": self._ref_bold_cb.isChecked(),
                 "italic": self._ref_italic_cb.isChecked(),
                 "color": self._ref_color_edit.text().strip(),
-                "alignment": self._ref_align_combo.currentText(),
+                "alignment": self._ref_align_h_combo.currentText(),
             },
             val_label_style={
                 "font_family": self._val_font_family_edit.text().strip(),
@@ -1896,7 +1982,14 @@ class UserComponentEditorDialog(QDialog):
                 "bold": self._val_bold_cb.isChecked(),
                 "italic": self._val_italic_cb.isChecked(),
                 "color": self._val_color_edit.text().strip(),
-                "alignment": self._val_align_combo.currentText(),
+                "alignment": self._val_align_h_combo.currentText(),
+            },
+            # Bug 3 fix: V-perspective alignment (other style props shared via H style)
+            ref_label_style_v={
+                "alignment": self._ref_align_v_combo.currentText(),
+            },
+            val_label_style_v={
+                "alignment": self._val_align_v_combo.currentText(),
             },
         )
 

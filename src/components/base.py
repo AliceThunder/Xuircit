@@ -112,6 +112,9 @@ class LabelItem(QGraphicsSimpleTextItem):
         # NOTE: ItemIgnoresTransformations is intentionally NOT set so the
         # label scales with the view zoom like the component body.
         self.setZValue(5)
+        # Bug 3 fix: explicit alignment override ("left", "center", "right").
+        # None means auto-compute from scene position (existing behaviour).
+        self._alignment_override: str | None = None
 
     def boundingRect(self) -> QRectF:
         """Return a conservative bounding rect centred on the item's origin.
@@ -162,20 +165,28 @@ class LabelItem(QGraphicsSimpleTextItem):
         br_text = QGraphicsSimpleTextItem.boundingRect(self)
         w, h = br_text.width(), br_text.height()
 
-        # Determine text alignment from scene position.
+        # Determine text alignment.
+        # If an explicit override is set, use it; otherwise auto-compute from position.
         # Left side  -> right-align (text ends at anchor)  ax = -w
         # Right side -> left-align  (text starts at anchor) ax = 0
         # Top/Bottom -> left-align per spec                  ax = 0
         ax: float = 0.0  # default: left-align
-        parent = self.parentItem()
-        if parent is not None:
-            lsp = self.mapToScene(QPointF(0.0, 0.0))
-            psp = parent.scenePos()
-            dx = lsp.x() - psp.x()
-            dy = lsp.y() - psp.y()
-            if abs(dx) >= abs(dy):
-                ax = -w if dx < 0 else 0.0
-            # else: top/bottom -> ax stays 0 (left-align)
+        if self._alignment_override is not None:
+            if self._alignment_override == "right":
+                ax = -w
+            elif self._alignment_override == "center":
+                ax = -w / 2
+            # else "left" → ax stays 0
+        else:
+            parent = self.parentItem()
+            if parent is not None:
+                lsp = self.mapToScene(QPointF(0.0, 0.0))
+                psp = parent.scenePos()
+                dx = lsp.x() - psp.x()
+                dy = lsp.y() - psp.y()
+                if abs(dx) >= abs(dy):
+                    ax = -w if dx < 0 else 0.0
+                # else: top/bottom -> ax stays 0 (left-align)
 
         painter.save()
         # Counter-rotate so the text is always upright.
