@@ -100,11 +100,8 @@ class UserComponentItem(ComponentItem):
             elif s.kind == "rect":
                 body_x += [s.x1, s.x1 + s.w]
                 body_y += [s.y1, s.y1 + s.h]
-            elif s.kind == "ellipse":
-                body_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
-                body_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
-            elif s.kind == "arc":
-                # Arc is center-based (x1=cx, y1=cy); include full bounding box
+            elif s.kind in ("ellipse", "arc"):
+                # Both are center-based (x1=cx, y1=cy); include full bounding box
                 body_x += [s.x1 - s.w / 2, s.x1 + s.w / 2]
                 body_y += [s.y1 - s.h / 2, s.y1 + s.h / 2]
             elif s.kind == "polyline":
